@@ -44,6 +44,9 @@ from enum import IntEnum
 import torch
 import torch.optim as optim
 
+from arg_parse_util import parse_args
+from profiler_helper import run_with_optional_profile
+
 
 # Feature index enums for cleaner code access
 class CellFeatureIdx(IntEnum):
@@ -247,6 +250,12 @@ def generate_placement_input(num_macros, num_std_cells):
 # ======= OPTIMIZATION CODE (edit this part) =======
 
 def wirelength_attraction_loss(cell_features, pin_features, edge_list):
+    # Q: Do I change this? 
+
+    # Vraj: change this later once the overlap loss is tuned
+    # Ans: No there are down stream calls that need this implementation to help evaluate the result
+
+    # Keep this code for testing and create a loss function when needed.
     """Calculate loss based on total wirelength to minimize routing.
 
     This is a REFERENCE IMPLEMENTATION showing how to write a differentiable loss function.
@@ -813,4 +822,4 @@ def main():
     )
 
 if __name__ == "__main__":
-    main()
+    run_with_optional_profile(main, parse_args(), OUTPUT_DIR)

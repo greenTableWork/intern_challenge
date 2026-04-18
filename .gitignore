@@ -4,4 +4,6 @@
 *.gif
 *.bmp
 
+*.ipynb_checkpoints/*
+profile/*
 **/__pycache__/**
