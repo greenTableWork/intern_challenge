@@ -45,8 +45,10 @@ import torch
 import torch.optim as optim
 
 from arg_parse_util import parse_args
+from loss_tracking_utils import save_loss_history_csv
 from profiler_helper import run_with_optional_profile
 
+torch.manual_seed(66)
 
 # Feature index enums for cleaner code access
 class CellFeatureIdx(IntEnum):
@@ -247,6 +249,11 @@ def generate_placement_input(num_macros, num_std_cells):
 
     return cell_features, pin_features, edge_list
 
+
+def total_wire_length(cell_features, pin_features, edge_list):
+    # the real goal seem to be to reduce the total wirelength.
+    # attraction loss can be a training method.
+    return 0
 # ======= OPTIMIZATION CODE (edit this part) =======
 
 def wirelength_attraction_loss(cell_features, pin_features, edge_list):
@@ -304,8 +311,9 @@ def wirelength_attraction_loss(cell_features, pin_features, edge_list):
 
     # Total wirelength
     total_wirelength = torch.sum(smooth_manhattan)
-
-    return total_wirelength / edge_list.shape[0]  # Normalize by number of edges
+    ret = total_wirelength / edge_list.shape[0]  # Normalize by number of edges
+    # print(ret.shape)
+    return ret
 
 
 def overlap_repulsion_loss(cell_features, pin_features, edge_list):
@@ -352,9 +360,51 @@ def overlap_repulsion_loss(cell_features, pin_features, edge_list):
     Returns:
         Scalar loss value (should be 0 when no overlaps exist)
     """
+    
+    
     N = cell_features.shape[0]
     if N <= 1:
         return torch.tensor(0.0, requires_grad=True)
+    
+    x_col = cell_features[:, CellFeatureIdx.X]
+    y_col = cell_features[:, CellFeatureIdx.Y]
+
+    x_delta = torch.abs(x_col.unsqueeze(1) - x_col.unsqueeze(0))
+    y_delta = torch.abs(y_col.unsqueeze(1) - y_col.unsqueeze(0))
+
+    # print("x_delta", x_delta)
+    # print("x_delta shape", x_delta.shape)
+    
+    widths = cell_features[:, CellFeatureIdx.WIDTH]
+    widths_i = widths.unsqueeze(1)
+    widths_j = widths.unsqueeze(0)
+    # print("widths", widths)
+    # print("widths.shape",widths.shape)
+    
+    heights = cell_features[:, CellFeatureIdx.HEIGHT]
+    heights_i = heights.unsqueeze(1)
+    heights_j = heights.unsqueeze(0)
+    # print("heights", heights)
+    # print("heights_i shape", heights_i.shape)
+
+    x_span = (widths_i + widths_j) / 2
+    y_span = (heights_i + heights_j) / 2
+
+    # print("x span", x_span)
+    # print("y span", y_span)
+
+
+    overlap_x = torch.relu(x_span - x_delta)
+    overlap_y = torch.relu(y_span - y_delta)
+
+    # print("overlap_x", overlap_x)
+    # print("overlap_y", overlap_y)
+
+    ret = torch.sum(overlap_x @ overlap_y)
+
+    
+
+    return ret
 
     # TODO: Implement overlap detection and loss calculation here
     #
@@ -373,10 +423,10 @@ def train_placement(
     cell_features,
     pin_features,
     edge_list,
-    num_epochs=1000,
-    lr=0.01,
-    lambda_wirelength=1.0,
-    lambda_overlap=10.0,
+    num_epochs=10000,
+    lr=0.1,
+    lambda_wirelength=3.0,
+    lambda_overlap=1.0,
     verbose=True,
     log_interval=100,
 ):
@@ -409,6 +459,7 @@ def train_placement(
 
     # Create optimizer
     optimizer = optim.Adam([cell_positions], lr=lr)
+    optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer)
 
     # Track loss history
     loss_history = {
@@ -419,6 +470,7 @@ def train_placement(
 
     # Training loop
     for epoch in range(num_epochs):
+        
         optimizer.zero_grad()
 
         # Create cell_features with current positions
@@ -729,7 +781,7 @@ def main():
 
     # Generate placement problem
     num_macros = 3
-    num_std_cells = 50
+    num_std_cells = 10
 
     print(f"Generating placement problem:")
     print(f"  - {num_macros} macros")
@@ -770,6 +822,8 @@ def main():
         verbose=True,
         log_interval=200,
     )
+    loss_history_path = save_loss_history_csv(result["loss_history"], OUTPUT_DIR)
+    print(f"Loss history saved to: {loss_history_path}")
 
     # Calculate final metrics (both detailed and normalized)
     print("\n" + "=" * 70)
