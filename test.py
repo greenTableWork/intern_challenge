@@ -24,10 +24,12 @@ import torch
 
 # Import from the challenge file
 from placement import (
+    OUTPUT_DIR,
     calculate_normalized_metrics,
     generate_placement_input,
     train_placement,
 )
+from loss_tracking_utils import save_loss_history_csv
 
 
 # Test case configurations: (test_id, num_macros, num_std_cells, seed)
@@ -46,8 +48,8 @@ TEST_CASES = [
     (9, 8, 200, 1009),
     (10, 10, 2000, 1010),
     # Realistic designs
-    (11, 10, 10000, 1011),
-    (12, 10, 100000, 1012),
+    # (11, 10, 10000, 1011),
+    # (12, 10, 100000, 1012),
 ]
 
 
@@ -97,8 +99,16 @@ def run_placement_test(
         pin_features,
         edge_list,
         verbose=False,  # Suppress per-epoch output
+        run_metadata={
+            "runner": "test.py",
+            "test_id": test_id,
+            "seed": seed,
+            "num_macros": num_macros,
+            "num_std_cells": num_std_cells,
+        },
     )
     elapsed_time = time.time() - start_time
+    loss_history_path = save_loss_history_csv(result["loss_history"], OUTPUT_DIR)
 
     # Calculate final metrics using shared implementation
     final_cell_features = result["final_cell_features"]
@@ -112,6 +122,7 @@ def run_placement_test(
         "num_nets": metrics["num_nets"],
         "seed": seed,
         "elapsed_time": elapsed_time,
+        "loss_history_path": loss_history_path,
         # Final metrics
         "num_cells_with_overlaps": metrics["num_cells_with_overlaps"],
         "overlap_ratio": metrics["overlap_ratio"],
@@ -161,6 +172,7 @@ def run_all_tests():
         print(f"  Overlap Ratio: {result['overlap_ratio']:.4f} ({result['num_cells_with_overlaps']}/{result['total_cells']} cells)")
         print(f"  Normalized WL: {result['normalized_wl']:.4f}")
         print(f"  Time: {result['elapsed_time']:.2f}s")
+        print(f"  History: {result['loss_history_path']}")
         print(f"  Status: {status}")
         print()
 

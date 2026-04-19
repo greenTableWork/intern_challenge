@@ -4,6 +4,7 @@
 *.gif
 *.bmp
 
-*.ipynb_checkpoints/*
+*/.ipynb_checkpoints/*
 profile/*
+loss_history/*
 **/__pycache__/**

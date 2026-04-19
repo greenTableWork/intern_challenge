@@ -40,6 +40,7 @@ BONUS CHALLENGES:
 
 import os
 from enum import IntEnum
+from datetime import datetime
 
 import torch
 import torch.optim as optim
@@ -429,6 +430,7 @@ def train_placement(
     lambda_overlap=1.0,
     verbose=True,
     log_interval=100,
+    run_metadata=None,
 ):
     """Train the placement optimization using gradient descent.
 
@@ -462,7 +464,24 @@ def train_placement(
     optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer)
 
     # Track loss history
+    history_run_metadata = {
+        "run_label": "train_placement",
+        "run_started_at": datetime.now().isoformat(timespec="seconds"),
+        "num_epochs": num_epochs,
+        "lr": lr,
+        "lambda_wirelength": lambda_wirelength,
+        "lambda_overlap": lambda_overlap,
+        "log_interval": log_interval,
+        "verbose": verbose,
+        "total_cells": int(cell_features.shape[0]),
+        "total_pins": int(pin_features.shape[0]),
+        "total_edges": int(edge_list.shape[0]),
+    }
+    if run_metadata:
+        history_run_metadata.update(run_metadata)
+
     loss_history = {
+        "run_metadata": history_run_metadata,
         "total_loss": [],
         "wirelength_loss": [],
         "overlap_loss": [],
@@ -837,6 +856,12 @@ def main():
         edge_list,
         verbose=True,
         log_interval=200,
+        run_metadata={
+            "runner": "placement.main",
+            "seed": 42,
+            "num_macros": num_macros,
+            "num_std_cells": num_std_cells,
+        },
     )
     loss_history_path = save_loss_history_csv(result["loss_history"], OUTPUT_DIR)
     print(f"Loss history saved to: {loss_history_path}")
