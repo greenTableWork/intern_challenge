@@ -400,11 +400,11 @@ def overlap_repulsion_loss(cell_features, pin_features, edge_list):
     # print("overlap_x", overlap_x)
     # print("overlap_y", overlap_y)
 
-    ret = torch.sum(overlap_x @ overlap_y)
+    pairwise_overlap_area = overlap_x * overlap_y
+    mask = torch.triu(torch.ones_like(pairwise_overlap_area), diagonal=1)
+    loss = torch.sum(pairwise_overlap_area * mask)    
 
-    
-
-    return ret
+    return loss
 
     # TODO: Implement overlap detection and loss calculation here
     #
@@ -466,6 +466,9 @@ def train_placement(
         "total_loss": [],
         "wirelength_loss": [],
         "overlap_loss": [],
+        "overlap_count": [],
+        "total_overlap_area": [],
+        "max_overlap_area": [],
     }
 
     # Training loop
@@ -497,10 +500,19 @@ def train_placement(
         # Update positions
         optimizer.step()
 
+        updated_cell_features = cell_features.clone()
+        updated_cell_features[:, 2:4] = cell_positions.detach()
+        overlap_metrics = calculate_overlap_metrics(updated_cell_features)
+
         # Record losses
         loss_history["total_loss"].append(total_loss.item())
         loss_history["wirelength_loss"].append(wl_loss.item())
         loss_history["overlap_loss"].append(overlap_loss.item())
+        loss_history["overlap_count"].append(overlap_metrics["overlap_count"])
+        loss_history["total_overlap_area"].append(
+            overlap_metrics["total_overlap_area"]
+        )
+        loss_history["max_overlap_area"].append(overlap_metrics["max_overlap_area"])
 
         # Log progress
         if verbose and (epoch % log_interval == 0 or epoch == num_epochs - 1):
@@ -508,6 +520,10 @@ def train_placement(
             print(f"  Total Loss: {total_loss.item():.6f}")
             print(f"  Wirelength Loss: {wl_loss.item():.6f}")
             print(f"  Overlap Loss: {overlap_loss.item():.6f}")
+            print(f"  Overlap Count: {overlap_metrics['overlap_count']}")
+            print(
+                f"  Total Overlap Area: {overlap_metrics['total_overlap_area']:.6f}"
+            )
 
     # Create final cell features
     final_cell_features = cell_features.clone()
