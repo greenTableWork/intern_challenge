@@ -7,4 +7,5 @@
 */.ipynb_checkpoints/*
 profile/*
 loss_history/*
+loss_tracking/*
 **/__pycache__/**

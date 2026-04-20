@@ -46,7 +46,7 @@ import torch
 import torch.optim as optim
 
 from arg_parse_util import parse_args
-from loss_tracking_utils import save_loss_history_csv
+from loss_tracking_utils import create_loss_tracking_db, save_loss_history_sqlite
 from profiler_helper import run_with_optional_profile
 
 torch.manual_seed(66)
@@ -424,7 +424,7 @@ def train_placement(
     cell_features,
     pin_features,
     edge_list,
-    num_epochs=10000,
+    num_epochs=2000,
     lr=0.1,
     lambda_wirelength=3.0,
     lambda_overlap=1.0,
@@ -850,6 +850,8 @@ def main():
     print("RUNNING OPTIMIZATION")
     print("=" * 70)
 
+    loss_tracking_db_path = create_loss_tracking_db(OUTPUT_DIR)
+
     result = train_placement(
         cell_features,
         pin_features,
@@ -863,7 +865,10 @@ def main():
             "num_std_cells": num_std_cells,
         },
     )
-    loss_history_path = save_loss_history_csv(result["loss_history"], OUTPUT_DIR)
+    loss_history_path = save_loss_history_sqlite(
+        result["loss_history"],
+        loss_tracking_db_path,
+    )
     print(f"Loss history saved to: {loss_history_path}")
 
     # Calculate final metrics (both detailed and normalized)

@@ -29,7 +29,7 @@ from placement import (
     generate_placement_input,
     train_placement,
 )
-from loss_tracking_utils import save_loss_history_csv
+from loss_tracking_utils import create_loss_tracking_db, save_loss_history_sqlite
 
 
 # Test case configurations: (test_id, num_macros, num_std_cells, seed)
@@ -57,6 +57,7 @@ def run_placement_test(
     test_id,
     num_macros,
     num_std_cells,
+    loss_tracking_db_path,
     seed=None,
 ):
     """Run placement optimization on a single test case.
@@ -108,7 +109,10 @@ def run_placement_test(
         },
     )
     elapsed_time = time.time() - start_time
-    loss_history_path = save_loss_history_csv(result["loss_history"], OUTPUT_DIR)
+    loss_history_path = save_loss_history_sqlite(
+        result["loss_history"],
+        loss_tracking_db_path,
+    )
 
     # Calculate final metrics using shared implementation
     final_cell_features = result["final_cell_features"]
@@ -146,6 +150,9 @@ def run_all_tests():
     print()
 
     all_results = []
+    loss_tracking_db_path = create_loss_tracking_db(OUTPUT_DIR)
+    print(f"Writing loss history to: {loss_tracking_db_path}")
+    print()
 
     for idx, (test_id, num_macros, num_std_cells, seed) in enumerate(TEST_CASES, 1):
         size_category = (
@@ -162,6 +169,7 @@ def run_all_tests():
             test_id,
             num_macros,
             num_std_cells,
+            loss_tracking_db_path,
             seed,
         )
 
