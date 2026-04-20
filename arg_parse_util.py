@@ -1,5 +1,7 @@
 import argparse
 
+from learning_rate_scheduler_util import SCHEDULER_CHOICES
+
 
 def parse_args():
     """Parse command line arguments for optional profiling."""
@@ -21,6 +23,24 @@ def parse_args():
         help="Number of optimization epochs for a regular training run.",
     )
     parser.add_argument(
+        "--num-macros",
+        type=int,
+        default=3,
+        help="Number of macro cells to generate for a placement run.",
+    )
+    parser.add_argument(
+        "--num-std-cells",
+        type=int,
+        default=10,
+        help="Number of standard cells to generate for a placement run.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed used to generate and initialize the placement problem.",
+    )
+    parser.add_argument(
         "--lr",
         type=float,
         default=0.1,
@@ -40,7 +60,7 @@ def parse_args():
     )
     parser.add_argument(
         "--scheduler",
-        choices=["plateau", "cosine", "none"],
+        choices=SCHEDULER_CHOICES,
         default="plateau",
         help="Learning-rate scheduler to use during training.",
     )
@@ -61,6 +81,18 @@ def parse_args():
         type=float,
         default=1e-4,
         help="Minimum learning rate for cosine annealing.",
+    )
+    parser.add_argument(
+        "--scheduler-step-size",
+        type=int,
+        default=100,
+        help="Step size in epochs for StepLR.",
+    )
+    parser.add_argument(
+        "--scheduler-gamma",
+        type=float,
+        default=0.95,
+        help="Gamma decay used by StepLR and ExponentialLR.",
     )
     parser.add_argument(
         "--optuna",

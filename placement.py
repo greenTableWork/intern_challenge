@@ -916,11 +916,11 @@ def main(args):
 
     # Set random seed for reproducibility
     device = get_best_device()
-    seed_torch(42)
+    seed_torch(args.seed)
 
     # Generate placement problem
-    num_macros = 3
-    num_std_cells = 10
+    num_macros = args.num_macros
+    num_std_cells = args.num_std_cells
 
     print(f"Generating placement problem:")
     print(f"  - {num_macros} macros")
@@ -970,7 +970,7 @@ def main(args):
         log_interval=200,
         run_metadata={
             "runner": "placement.main",
-            "seed": 42,
+            "seed": args.seed,
             "num_macros": num_macros,
             "num_std_cells": num_std_cells,
         },

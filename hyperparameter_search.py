@@ -1,3 +1,6 @@
+from learning_rate_scheduler_util import suggest_scheduler_config
+
+
 DEFAULT_OPTUNA_TUNING_CASES = [
     (2, 20, 1201),
     (3, 40, 1202),
@@ -41,31 +44,11 @@ def run_optuna_search(
             log=True,
         )
         lr = trial.suggest_float("lr", 1e-3, 3e-1, log=True)
-        scheduler_name = trial.suggest_categorical(
-            "scheduler",
-            ["plateau", "cosine", "none"],
+        scheduler_name, scheduler_kwargs = suggest_scheduler_config(
+            trial,
+            lr=lr,
+            num_epochs=args.optuna_epochs,
         )
-
-        scheduler_kwargs = {}
-        if scheduler_name == "plateau":
-            scheduler_kwargs["factor"] = trial.suggest_float(
-                "scheduler_factor",
-                0.2,
-                0.8,
-            )
-            scheduler_kwargs["patience"] = trial.suggest_int(
-                "scheduler_patience",
-                20,
-                120,
-            )
-        elif scheduler_name == "cosine":
-            eta_min_ratio = trial.suggest_float(
-                "scheduler_eta_min_ratio",
-                1e-4,
-                0.2,
-                log=True,
-            )
-            scheduler_kwargs["eta_min"] = lr * eta_min_ratio
 
         overlap_scores = []
         wirelength_scores = []
