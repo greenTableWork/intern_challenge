@@ -509,7 +509,7 @@ def train_placement(
 
     # Create optimizer
     optimizer = optim.Adam([cell_positions], lr=lr)
-    optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer)
 
     # Track loss history
     history_run_metadata = {
@@ -567,6 +567,7 @@ def train_placement(
 
         # Update positions
         optimizer.step()
+        scheduler.step(total_loss.item())
 
         updated_cell_features = cell_features.clone()
         updated_cell_features[:, 2:4] = cell_positions.detach()
