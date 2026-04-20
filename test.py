@@ -19,6 +19,7 @@ not to tune hyperparameters.
 """
 
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import torch
 
@@ -131,6 +132,7 @@ def run_placement_test(
         "total_cells": metrics["total_cells"],
         "num_nets": metrics["num_nets"],
         "seed": seed,
+        "device": str(device),
         "elapsed_time": elapsed_time,
         "loss_history_path": loss_history_path,
         # Final metrics
@@ -138,6 +140,18 @@ def run_placement_test(
         "overlap_ratio": metrics["overlap_ratio"],
         "normalized_wl": metrics["normalized_wl"],
     }
+
+
+def run_placement_test_case(test_case, loss_tracking_db_path):
+    """Unpack a test-case tuple for multiprocessing execution."""
+    test_id, num_macros, num_std_cells, seed = test_case
+    return run_placement_test(
+        test_id,
+        num_macros,
+        num_std_cells,
+        loss_tracking_db_path,
+        seed,
+    )
 
 
 def run_all_tests():
@@ -155,10 +169,11 @@ def run_all_tests():
     print("Using default hyperparameters from train_placement()")
     print()
 
-    all_results = []
     loss_tracking_db_path = create_loss_tracking_db(OUTPUT_DIR)
     print(f"Writing loss history to: {loss_tracking_db_path}")
     print()
+
+    max_workers = 4
 
     for idx, (test_id, num_macros, num_std_cells, seed) in enumerate(TEST_CASES, 1):
         size_category = (
@@ -169,32 +184,49 @@ def run_all_tests():
 
         print(f"Test {idx}/{len(TEST_CASES)}: {size_category} ({num_macros} macros, {num_std_cells} std cells)")
         print(f"  Seed: {seed}")
-        print(f"  Device: {get_best_device()}")
+    print(f"Running up to {max_workers} tests concurrently")
+    print()
 
-        # Run test
-        result = run_placement_test(
-            test_id,
-            num_macros,
-            num_std_cells,
-            loss_tracking_db_path,
-            seed,
-        )
+    wall_start_time = time.time()
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        future_to_test_case = {
+            executor.submit(
+                run_placement_test_case,
+                test_case,
+                loss_tracking_db_path,
+            ): test_case
+            for test_case in TEST_CASES
+        }
 
-        all_results.append(result)
+        completed_results = {}
+        for future in as_completed(future_to_test_case):
+            result = future.result()
+            completed_results[result["test_id"]] = result
 
-        # Print summary
-        status = "✓ PASS" if result["num_cells_with_overlaps"] == 0 else "✗ FAIL"
-        print(f"  Overlap Ratio: {result['overlap_ratio']:.4f} ({result['num_cells_with_overlaps']}/{result['total_cells']} cells)")
-        print(f"  Normalized WL: {result['normalized_wl']:.4f}")
-        print(f"  Time: {result['elapsed_time']:.2f}s")
-        print(f"  History: {result['loss_history_path']}")
-        print(f"  Status: {status}")
-        print()
+            status = "✓ PASS" if result["num_cells_with_overlaps"] == 0 else "✗ FAIL"
+            print(f"Completed test {result['test_id']}:")
+            print(
+                f"  Device: {result['device']}"
+            )
+            print(
+                f"  Overlap Ratio: {result['overlap_ratio']:.4f} "
+                f"({result['num_cells_with_overlaps']}/{result['total_cells']} cells)"
+            )
+            print(f"  Normalized WL: {result['normalized_wl']:.4f}")
+            print(f"  Time: {result['elapsed_time']:.2f}s")
+            print(f"  History: {result['loss_history_path']}")
+            print(f"  Status: {status}")
+            print()
+
+    all_results = [
+        completed_results[test_id]
+        for test_id, _, _, _ in TEST_CASES
+    ]
 
     # Compute aggregate statistics
     avg_overlap_ratio = sum(r["overlap_ratio"] for r in all_results) / len(all_results)
     avg_normalized_wl = sum(r["normalized_wl"] for r in all_results) / len(all_results)
-    total_time = sum(r["elapsed_time"] for r in all_results)
+    total_time = time.time() - wall_start_time
 
     # Print aggregate results
     print("=" * 70)
