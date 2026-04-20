@@ -9,3 +9,4 @@ profile/*
 loss_history/*
 loss_tracking/*
 **/__pycache__/**
+temp.txt

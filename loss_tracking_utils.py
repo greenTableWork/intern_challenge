@@ -104,6 +104,19 @@ def _ensure_columns(connection, table_name, columns):
             )
 
 
+def _sqlite_scalar(value):
+    """Convert torch/numpy scalar-like values to sqlite-friendly Python scalars."""
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes, int, float)):
+        return value
+    if isinstance(value, bool):
+        return int(value)
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
 def save_loss_history_sqlite(loss_history, db_path, run_metadata=None):
     """Save loss history values to a normalized SQLite database."""
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -222,18 +235,30 @@ def save_loss_history_sqlite(loss_history, db_path, run_metadata=None):
                 (
                     metadata["run_id"],
                     epoch,
-                    total_loss[epoch] if epoch < len(total_loss) else None,
-                    wirelength_loss[epoch]
-                    if epoch < len(wirelength_loss)
-                    else None,
-                    overlap_loss[epoch] if epoch < len(overlap_loss) else None,
-                    overlap_count[epoch] if epoch < len(overlap_count) else None,
-                    total_overlap_area[epoch]
-                    if epoch < len(total_overlap_area)
-                    else None,
-                    max_overlap_area[epoch]
-                    if epoch < len(max_overlap_area)
-                    else None,
+                    _sqlite_scalar(
+                        total_loss[epoch] if epoch < len(total_loss) else None
+                    ),
+                    _sqlite_scalar(
+                        wirelength_loss[epoch]
+                        if epoch < len(wirelength_loss)
+                        else None
+                    ),
+                    _sqlite_scalar(
+                        overlap_loss[epoch] if epoch < len(overlap_loss) else None
+                    ),
+                    _sqlite_scalar(
+                        overlap_count[epoch] if epoch < len(overlap_count) else None
+                    ),
+                    _sqlite_scalar(
+                        total_overlap_area[epoch]
+                        if epoch < len(total_overlap_area)
+                        else None
+                    ),
+                    _sqlite_scalar(
+                        max_overlap_area[epoch]
+                        if epoch < len(max_overlap_area)
+                        else None
+                    ),
                 )
             )
 
