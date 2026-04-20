@@ -445,8 +445,10 @@ def overlap_repulsion_loss(cell_features, pin_features, edge_list):
 
     pairwise_overlap_area = overlap_x * overlap_y
     mask = torch.triu(torch.ones_like(pairwise_overlap_area), diagonal=1)
-    num_pairs = N * (N - 1) / 2
-    loss = torch.sum(pairwise_overlap_area * mask) / num_pairs
+    # num_pairs = N * (N - 1) / 2
+
+
+    loss = torch.sum(pairwise_overlap_area * mask) / edge_list.shape[0]
 
     return loss
 
