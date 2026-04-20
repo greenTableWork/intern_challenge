@@ -6,22 +6,23 @@ This script runs the placement optimizer on 10 randomly generated netlists
 of various sizes and reports metrics for leaderboard submission.
 
 Usage:
-    python test_placement.py
+    python test.py
 
 Metrics Reported:
     - Average Overlap: (num cells with overlaps / total num cells)
     - Average Wirelength: (total wirelength / num nets) / sqrt(total area)
       This normalization allows fair comparison across different design sizes.
 
-Note: This test uses the default hyperparameters from train_placement() in
-vb_playground.py. The challenge is to implement the overlap loss function,
-not to tune hyperparameters.
+Note: This test reuses the shared CLI hyperparameter options from placement.py
+and evaluates them across the benchmark test cases.
 """
 
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-import torch
+from arg_parse_util import parse_args
+from learning_rate_scheduler_util import build_scheduler_kwargs_from_args
+from profiler_helper import run_with_optional_profile
 
 # Import from the challenge file
 from placement import (
@@ -29,6 +30,7 @@ from placement import (
     calculate_normalized_metrics,
     generate_placement_input,
     get_best_device,
+    initialize_cell_positions,
     seed_torch,
     train_placement,
 )
@@ -61,16 +63,16 @@ def run_placement_test(
     num_macros,
     num_std_cells,
     loss_tracking_db_path,
+    training_config,
     seed=None,
 ):
     """Run placement optimization on a single test case.
-
-    Uses default hyperparameters from train_placement() function.
 
     Args:
         test_id: Test case identifier
         num_macros: Number of macro cells
         num_std_cells: Number of standard cells
+        training_config: Hyperparameters for train_placement
         seed: Random seed for reproducibility
 
     Returns:
@@ -90,22 +92,21 @@ def run_placement_test(
     )
 
     # Initialize positions with random spread
-    total_cells = cell_features.shape[0]
-    total_area = cell_features[:, 0].sum().item()
-    spread_radius = (total_area ** 0.5) * 0.6
+    initialize_cell_positions(cell_features)
 
-    angles = torch.rand(total_cells, device=device) * 2 * 3.14159
-    radii = torch.rand(total_cells, device=device) * spread_radius
-
-    cell_features[:, 2] = radii * torch.cos(angles)
-    cell_features[:, 3] = radii * torch.sin(angles)
-
-    # Run optimization with default hyperparameters
+    # Run optimization with the selected hyperparameters
     start_time = time.time()
     result = train_placement(
         cell_features,
         pin_features,
         edge_list,
+        num_epochs=training_config["num_epochs"],
+        lr=training_config["lr"],
+        lambda_wirelength=training_config["lambda_wirelength"],
+        lambda_overlap=training_config["lambda_overlap"],
+        scheduler_name=training_config["scheduler_name"],
+        scheduler_kwargs=training_config["scheduler_kwargs"],
+        track_loss_history=training_config["track_loss_history"],
         verbose=False,  # Suppress per-epoch output
         run_metadata={
             "runner": "test.py",
@@ -116,10 +117,12 @@ def run_placement_test(
         },
     )
     elapsed_time = time.time() - start_time
-    loss_history_path = save_loss_history_sqlite(
-        result["loss_history"],
-        loss_tracking_db_path,
-    )
+    loss_history_path = None
+    if training_config["track_loss_history"]:
+        loss_history_path = save_loss_history_sqlite(
+            result["loss_history"],
+            loss_tracking_db_path,
+        )
 
     # Calculate final metrics using shared implementation
     final_cell_features = result["final_cell_features"]
@@ -140,38 +143,57 @@ def run_placement_test(
         "overlap_ratio": metrics["overlap_ratio"],
         "normalized_wl": metrics["normalized_wl"],
     }
-
-
-def run_placement_test_case(test_case, loss_tracking_db_path):
-    """Unpack a test-case tuple for multiprocessing execution."""
+def run_placement_test_case_with_config(test_case, loss_tracking_db_path, training_config):
+    """Unpack a test-case tuple for multiprocessing execution with config."""
     test_id, num_macros, num_std_cells, seed = test_case
     return run_placement_test(
         test_id,
         num_macros,
         num_std_cells,
         loss_tracking_db_path,
+        training_config,
         seed,
     )
 
 
-def run_all_tests():
+def run_all_tests(args):
     """Run all test cases and compute aggregate metrics.
-
-    Uses default hyperparameters from train_placement() function.
 
     Returns:
         Dictionary with all test results and aggregate statistics
     """
+    training_config = {
+        "num_epochs": args.num_epochs,
+        "lr": args.lr,
+        "lambda_wirelength": args.lambda_wirelength,
+        "lambda_overlap": args.lambda_overlap,
+        "scheduler_name": args.scheduler,
+        "scheduler_kwargs": build_scheduler_kwargs_from_args(args),
+        "track_loss_history": args.track_loss_history,
+    }
+
     print("=" * 70)
     print("PLACEMENT CHALLENGE TEST SUITE")
     print("=" * 70)
     print(f"\nRunning {len(TEST_CASES)} test cases with various netlist sizes...")
-    print("Using default hyperparameters from train_placement()")
+    print("Using hyperparameters:")
+    print(f"  num_epochs: {training_config['num_epochs']}")
+    print(f"  lr: {training_config['lr']}")
+    print(f"  lambda_wirelength: {training_config['lambda_wirelength']}")
+    print(f"  lambda_overlap: {training_config['lambda_overlap']}")
+    print(f"  scheduler: {training_config['scheduler_name']}")
+    print(f"  scheduler_kwargs: {training_config['scheduler_kwargs']}")
+    print(f"  track_loss_history: {training_config['track_loss_history']}")
     print()
 
-    loss_tracking_db_path = create_loss_tracking_db(OUTPUT_DIR)
-    print(f"Writing loss history to: {loss_tracking_db_path}")
-    print()
+    loss_tracking_db_path = None
+    if args.track_loss_history:
+        loss_tracking_db_path = create_loss_tracking_db(OUTPUT_DIR)
+        print(f"Writing loss history to: {loss_tracking_db_path}")
+        print()
+    else:
+        print("Loss history tracking disabled.")
+        print()
 
     max_workers = 4
 
@@ -191,9 +213,10 @@ def run_all_tests():
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         future_to_test_case = {
             executor.submit(
-                run_placement_test_case,
+                run_placement_test_case_with_config,
                 test_case,
                 loss_tracking_db_path,
+                training_config,
             ): test_case
             for test_case in TEST_CASES
         }
@@ -214,7 +237,8 @@ def run_all_tests():
             )
             print(f"  Normalized WL: {result['normalized_wl']:.4f}")
             print(f"  Time: {result['elapsed_time']:.2f}s")
-            print(f"  History: {result['loss_history_path']}")
+            if result["loss_history_path"] is not None:
+                print(f"  History: {result['loss_history_path']}")
             print(f"  Status: {status}")
             print()
 
@@ -244,11 +268,11 @@ def run_all_tests():
     }
 
 
-def main():
+def main(args):
     """Main entry point for the test suite."""
-    # Run all tests with default hyperparameters
-    run_all_tests()
+    run_all_tests(args)
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    run_with_optional_profile(lambda: main(args), args, OUTPUT_DIR)

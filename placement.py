@@ -46,6 +46,11 @@ import torch
 import torch.optim as optim
 
 from arg_parse_util import parse_args
+from hyperparameter_search import run_optuna_search
+from learning_rate_scheduler_util import (
+    build_scheduler_kwargs_from_args,
+    create_lr_scheduler,
+)
 from loss_tracking_utils import create_loss_tracking_db, save_loss_history_sqlite
 from profiler_helper import run_with_optional_profile
 
@@ -105,10 +110,9 @@ MAX_STANDARD_CELL_PINS = 6
 
 # Output directory
 OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
-
 # ======= SETUP =======
 
-def generate_placement_input(num_macros, num_std_cells, device=None):
+def generate_placement_input(num_macros, num_std_cells, device=None, verbose=True):
     """Generate synthetic placement input data.
 
     Args:
@@ -284,13 +288,27 @@ def generate_placement_input(num_macros, num_std_cells, device=None):
     else:
         edge_list = torch.zeros((0, 2), dtype=torch.long, device=device)
 
-    print(f"\nGenerated placement data:")
-    print(f"  Total cells: {total_cells}")
-    print(f"  Total pins: {total_pins}")
-    print(f"  Total edges: {len(edge_list)}")
-    print(f"  Average edges per pin: {2 * len(edge_list) / total_pins:.2f}")
+    if verbose:
+        print(f"\nGenerated placement data:")
+        print(f"  Total cells: {total_cells}")
+        print(f"  Total pins: {total_pins}")
+        print(f"  Total edges: {len(edge_list)}")
+        print(f"  Average edges per pin: {2 * len(edge_list) / total_pins:.2f}")
 
     return cell_features, pin_features, edge_list
+
+
+def initialize_cell_positions(cell_features, spread_scale=0.6):
+    """Initialize cell centers with a random radial spread."""
+    total_cells = cell_features.shape[0]
+    total_area = cell_features[:, CellFeatureIdx.AREA].sum().item()
+    spread_radius = max((total_area ** 0.5) * spread_scale, 1.0)
+
+    angles = torch.rand(total_cells, device=cell_features.device) * 2 * torch.pi
+    radii = torch.rand(total_cells, device=cell_features.device) * spread_radius
+
+    cell_features[:, CellFeatureIdx.X] = radii * torch.cos(angles)
+    cell_features[:, CellFeatureIdx.Y] = radii * torch.sin(angles)
 
 
 def total_wire_length(cell_features, pin_features, edge_list):
@@ -470,6 +488,9 @@ def train_placement(
     lr=0.1,
     lambda_wirelength=3.0,
     lambda_overlap=1.0,
+    scheduler_name="plateau",
+    scheduler_kwargs=None,
+    track_loss_history=True,
     verbose=True,
     log_interval=100,
     run_metadata=None,
@@ -484,6 +505,9 @@ def train_placement(
         lr: Learning rate for Adam optimizer
         lambda_wirelength: Weight for wirelength loss
         lambda_overlap: Weight for overlap loss
+        scheduler_name: Learning-rate scheduler name
+        scheduler_kwargs: Scheduler-specific keyword arguments
+        track_loss_history: Whether to collect per-epoch loss history
         verbose: Whether to print progress
         log_interval: How often to print progress
 
@@ -508,10 +532,15 @@ def train_placement(
     cell_positions.requires_grad_(True)
 
     # Create optimizer
+    scheduler_kwargs = dict(scheduler_kwargs or {})
     optimizer = optim.Adam([cell_positions], lr=lr)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer)
+    scheduler, scheduler_uses_metric = create_lr_scheduler(
+        optimizer,
+        scheduler_name=scheduler_name,
+        num_epochs=num_epochs,
+        scheduler_kwargs=scheduler_kwargs,
+    )
 
-    # Track loss history
     history_run_metadata = {
         "run_label": "train_placement",
         "run_started_at": datetime.now().isoformat(timespec="seconds"),
@@ -520,6 +549,9 @@ def train_placement(
         "lr": lr,
         "lambda_wirelength": lambda_wirelength,
         "lambda_overlap": lambda_overlap,
+        "scheduler_name": scheduler_name,
+        "scheduler_kwargs": scheduler_kwargs,
+        "track_loss_history": track_loss_history,
         "log_interval": log_interval,
         "verbose": verbose,
         "total_cells": int(cell_features.shape[0]),
@@ -529,15 +561,18 @@ def train_placement(
     if run_metadata:
         history_run_metadata.update(run_metadata)
 
-    loss_history = {
-        "run_metadata": history_run_metadata,
-        "total_loss": [],
-        "wirelength_loss": [],
-        "overlap_loss": [],
-        "overlap_count": [],
-        "total_overlap_area": [],
-        "max_overlap_area": [],
-    }
+    loss_history = None
+    if track_loss_history:
+        loss_history = {
+            "run_metadata": history_run_metadata,
+            "total_loss": [],
+            "wirelength_loss": [],
+            "overlap_loss": [],
+            "overlap_count": [],
+            "total_overlap_area": [],
+            "max_overlap_area": [],
+            "learning_rate": [],
+        }
 
     # Training loop
     for epoch in range(num_epochs):
@@ -567,21 +602,26 @@ def train_placement(
 
         # Update positions
         optimizer.step()
-        scheduler.step(total_loss.item())
+        if scheduler is not None:
+            if scheduler_uses_metric:
+                scheduler.step(total_loss.item())
+            else:
+                scheduler.step()
 
         updated_cell_features = cell_features.clone()
         updated_cell_features[:, 2:4] = cell_positions.detach()
         overlap_metrics = calculate_overlap_metrics(updated_cell_features)
 
-        # Record losses
-        loss_history["total_loss"].append(total_loss.item())
-        loss_history["wirelength_loss"].append(wl_loss.item())
-        loss_history["overlap_loss"].append(overlap_loss.item())
-        loss_history["overlap_count"].append(overlap_metrics["overlap_count"])
-        loss_history["total_overlap_area"].append(
-            overlap_metrics["total_overlap_area"]
-        )
-        loss_history["max_overlap_area"].append(overlap_metrics["max_overlap_area"])
+        if loss_history is not None:
+            loss_history["total_loss"].append(total_loss.item())
+            loss_history["wirelength_loss"].append(wl_loss.item())
+            loss_history["overlap_loss"].append(overlap_loss.item())
+            loss_history["overlap_count"].append(overlap_metrics["overlap_count"])
+            loss_history["total_overlap_area"].append(
+                overlap_metrics["total_overlap_area"]
+            )
+            loss_history["max_overlap_area"].append(overlap_metrics["max_overlap_area"])
+            loss_history["learning_rate"].append(optimizer.param_groups[0]["lr"])
 
         # Log progress
         if verbose and (epoch % log_interval == 0 or epoch == num_epochs - 1):
@@ -589,6 +629,7 @@ def train_placement(
             print(f"  Total Loss: {total_loss.item():.6f}")
             print(f"  Wirelength Loss: {wl_loss.item():.6f}")
             print(f"  Overlap Loss: {overlap_loss.item():.6f}")
+            print(f"  Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
             print(f"  Overlap Count: {overlap_metrics['overlap_count']}")
             print(
                 f"  Total Overlap Area: {overlap_metrics['total_overlap_area']:.6f}"
@@ -853,8 +894,20 @@ def plot_placement(
 
 # ======= MAIN FUNCTION =======
 
-def main():
+def main(args):
     """Main function demonstrating the placement optimization challenge."""
+    if args.optuna:
+        run_optuna_search(
+            args,
+            get_best_device=get_best_device,
+            seed_torch=seed_torch,
+            generate_placement_input=generate_placement_input,
+            initialize_cell_positions=initialize_cell_positions,
+            train_placement=train_placement,
+            calculate_normalized_metrics=calculate_normalized_metrics,
+        )
+        return
+
     print("=" * 70)
     print("VLSI CELL PLACEMENT OPTIMIZATION CHALLENGE")
     print("=" * 70)
@@ -881,13 +934,7 @@ def main():
     )
 
     # Initialize positions with random spread to reduce initial overlaps
-    total_cells = cell_features.shape[0]
-    spread_radius = 30.0
-    angles = torch.rand(total_cells, device=device) * 2 * 3.14159
-    radii = torch.rand(total_cells, device=device) * spread_radius
-
-    cell_features[:, 2] = radii * torch.cos(angles)
-    cell_features[:, 3] = radii * torch.sin(angles)
+    initialize_cell_positions(cell_features)
 
     # Calculate initial metrics
     print("\n" + "=" * 70)
@@ -904,12 +951,21 @@ def main():
     print("RUNNING OPTIMIZATION")
     print("=" * 70)
 
-    loss_tracking_db_path = create_loss_tracking_db(OUTPUT_DIR)
+    loss_tracking_db_path = None
+    if args.track_loss_history:
+        loss_tracking_db_path = create_loss_tracking_db(OUTPUT_DIR)
 
     result = train_placement(
         cell_features,
         pin_features,
         edge_list,
+        num_epochs=args.num_epochs,
+        lr=args.lr,
+        lambda_wirelength=args.lambda_wirelength,
+        lambda_overlap=args.lambda_overlap,
+        scheduler_name=args.scheduler,
+        scheduler_kwargs=build_scheduler_kwargs_from_args(args),
+        track_loss_history=args.track_loss_history,
         verbose=True,
         log_interval=200,
         run_metadata={
@@ -919,11 +975,14 @@ def main():
             "num_std_cells": num_std_cells,
         },
     )
-    loss_history_path = save_loss_history_sqlite(
-        result["loss_history"],
-        loss_tracking_db_path,
-    )
-    print(f"Loss history saved to: {loss_history_path}")
+    if args.track_loss_history:
+        loss_history_path = save_loss_history_sqlite(
+            result["loss_history"],
+            loss_tracking_db_path,
+        )
+        print(f"Loss history saved to: {loss_history_path}")
+    else:
+        print("Loss history tracking disabled.")
 
     # Calculate final metrics (both detailed and normalized)
     print("\n" + "=" * 70)
@@ -976,4 +1035,5 @@ def main():
     )
 
 if __name__ == "__main__":
-    run_with_optional_profile(main, parse_args(), OUTPUT_DIR)
+    args = parse_args()
+    run_with_optional_profile(lambda: main(args), args, OUTPUT_DIR)
