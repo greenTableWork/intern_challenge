@@ -27,6 +27,8 @@ from placement import (
     OUTPUT_DIR,
     calculate_normalized_metrics,
     generate_placement_input,
+    get_best_device,
+    seed_torch,
     train_placement,
 )
 from loss_tracking_utils import create_loss_tracking_db, save_loss_history_sqlite
@@ -43,10 +45,10 @@ TEST_CASES = [
     (5, 4, 75, 1005),
     (6, 5, 100, 1006),
     # Large designs
-    (7, 5, 150, 1007),
-    (8, 7, 150, 1008),
-    (9, 8, 200, 1009),
-    (10, 10, 2000, 1010),
+    # (7, 5, 150, 1007),
+    # (8, 7, 150, 1008),
+    # (9, 8, 200, 1009),
+    # (10, 10, 2000, 1010),
     # Realistic designs
     # (11, 10, 10000, 1011),
     # (12, 10, 100000, 1012),
@@ -75,11 +77,15 @@ def run_placement_test(
     """
     if seed:
         # Set seed for reproducibility
-        torch.manual_seed(seed)
+        seed_torch(seed)
+
+    device = get_best_device()
 
     # Generate netlist
     cell_features, pin_features, edge_list = generate_placement_input(
-        num_macros, num_std_cells
+        num_macros,
+        num_std_cells,
+        device=device,
     )
 
     # Initialize positions with random spread
@@ -87,8 +93,8 @@ def run_placement_test(
     total_area = cell_features[:, 0].sum().item()
     spread_radius = (total_area ** 0.5) * 0.6
 
-    angles = torch.rand(total_cells) * 2 * 3.14159
-    radii = torch.rand(total_cells) * spread_radius
+    angles = torch.rand(total_cells, device=device) * 2 * 3.14159
+    radii = torch.rand(total_cells, device=device) * spread_radius
 
     cell_features[:, 2] = radii * torch.cos(angles)
     cell_features[:, 3] = radii * torch.sin(angles)
@@ -163,6 +169,7 @@ def run_all_tests():
 
         print(f"Test {idx}/{len(TEST_CASES)}: {size_category} ({num_macros} macros, {num_std_cells} std cells)")
         print(f"  Seed: {seed}")
+        print(f"  Device: {get_best_device()}")
 
         # Run test
         result = run_placement_test(

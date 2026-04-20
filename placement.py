@@ -49,7 +49,24 @@ from arg_parse_util import parse_args
 from loss_tracking_utils import create_loss_tracking_db, save_loss_history_sqlite
 from profiler_helper import run_with_optional_profile
 
-torch.manual_seed(66)
+
+def get_best_device():
+    """Select the fastest available torch device."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def seed_torch(seed):
+    """Seed torch RNGs across supported backends."""
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+seed_torch(66)
 
 # Feature index enums for cleaner code access
 class CellFeatureIdx(IntEnum):
@@ -91,7 +108,7 @@ OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ======= SETUP =======
 
-def generate_placement_input(num_macros, num_std_cells):
+def generate_placement_input(num_macros, num_std_cells, device=None):
     """Generate synthetic placement input data.
 
     Args:
@@ -105,16 +122,18 @@ def generate_placement_input(num_macros, num_std_cells):
               [cell_instance_index, pin_x, pin_y, x, y, pin_width, pin_height]
             - edge_list: torch.Tensor of shape [E, 2] with [src_pin_idx, tgt_pin_idx]
     """
+    device = device or get_best_device()
     total_cells = num_macros + num_std_cells
 
     # Step 1: Generate macro areas (uniformly distributed between min and max)
     macro_areas = (
-        torch.rand(num_macros) * (MAX_MACRO_AREA - MIN_MACRO_AREA) + MIN_MACRO_AREA
+        torch.rand(num_macros, device=device) * (MAX_MACRO_AREA - MIN_MACRO_AREA)
+        + MIN_MACRO_AREA
     )
 
     # Step 2: Generate standard cell areas (randomly pick from 1, 2, or 3)
-    std_cell_areas = torch.tensor(STANDARD_CELL_AREAS)[
-        torch.randint(0, len(STANDARD_CELL_AREAS), (num_std_cells,))
+    std_cell_areas = torch.tensor(STANDARD_CELL_AREAS, device=device)[
+        torch.randint(0, len(STANDARD_CELL_AREAS), (num_std_cells,), device=device)
     ]
 
     # Combine all areas
@@ -127,27 +146,39 @@ def generate_placement_input(num_macros, num_std_cells):
 
     # Standard cells have fixed height = 1, width = area
     std_cell_widths = std_cell_areas / STANDARD_CELL_HEIGHT
-    std_cell_heights = torch.full((num_std_cells,), STANDARD_CELL_HEIGHT)
+    std_cell_heights = torch.full(
+        (num_std_cells,),
+        STANDARD_CELL_HEIGHT,
+        device=device,
+    )
 
     # Combine dimensions
     cell_widths = torch.cat([macro_widths, std_cell_widths])
     cell_heights = torch.cat([macro_heights, std_cell_heights])
 
     # Step 4: Calculate number of pins per cell
-    num_pins_per_cell = torch.zeros(total_cells, dtype=torch.int)
+    num_pins_per_cell = torch.zeros(total_cells, dtype=torch.int, device=device)
 
     # Macros: between sqrt(area) and 2*sqrt(area) pins
     for i in range(num_macros):
         sqrt_area = int(torch.sqrt(macro_areas[i]).item())
-        num_pins_per_cell[i] = torch.randint(sqrt_area, 2 * sqrt_area + 1, (1,)).item()
+        num_pins_per_cell[i] = torch.randint(
+            sqrt_area,
+            2 * sqrt_area + 1,
+            (1,),
+            device=device,
+        ).item()
 
     # Standard cells: between 3 and 6 pins
     num_pins_per_cell[num_macros:] = torch.randint(
-        MIN_STANDARD_CELL_PINS, MAX_STANDARD_CELL_PINS + 1, (num_std_cells,)
+        MIN_STANDARD_CELL_PINS,
+        MAX_STANDARD_CELL_PINS + 1,
+        (num_std_cells,),
+        device=device,
     )
 
     # Step 5: Create cell features tensor [area, num_pins, x, y, width, height]
-    cell_features = torch.zeros(total_cells, 6)
+    cell_features = torch.zeros(total_cells, 6, device=device)
     cell_features[:, CellFeatureIdx.AREA] = areas
     cell_features[:, CellFeatureIdx.NUM_PINS] = num_pins_per_cell.float()
     cell_features[:, CellFeatureIdx.X] = 0.0  # x position (initialized to 0)
@@ -157,7 +188,7 @@ def generate_placement_input(num_macros, num_std_cells):
 
     # Step 6: Generate pins for each cell
     total_pins = num_pins_per_cell.sum().item()
-    pin_features = torch.zeros(total_pins, 7)
+    pin_features = torch.zeros(total_pins, 7, device=device)
 
     # Fixed pin size for all pins (square pins)
     PIN_SIZE = 0.1  # All pins are 0.1 x 0.1
@@ -172,12 +203,18 @@ def generate_placement_input(num_macros, num_std_cells):
         # Offset from edges to ensure pins are fully inside
         margin = PIN_SIZE / 2
         if cell_width > 2 * margin and cell_height > 2 * margin:
-            pin_x = torch.rand(n_pins) * (cell_width - 2 * margin) + margin
-            pin_y = torch.rand(n_pins) * (cell_height - 2 * margin) + margin
+            pin_x = (
+                torch.rand(n_pins, device=device) * (cell_width - 2 * margin)
+                + margin
+            )
+            pin_y = (
+                torch.rand(n_pins, device=device) * (cell_height - 2 * margin)
+                + margin
+            )
         else:
             # For very small cells, just center the pins
-            pin_x = torch.full((n_pins,), cell_width / 2)
-            pin_y = torch.full((n_pins,), cell_height / 2)
+            pin_x = torch.full((n_pins,), cell_width / 2, device=device)
+            pin_y = torch.full((n_pins,), cell_height / 2, device=device)
 
         # Fill pin features
         pin_features[pin_idx : pin_idx + n_pins, PinFeatureIdx.CELL_IDX] = cell_idx
@@ -203,7 +240,7 @@ def generate_placement_input(num_macros, num_std_cells):
     edge_list = []
     avg_edges_per_pin = 2.0
 
-    pin_to_cell = torch.zeros(total_pins, dtype=torch.long)
+    pin_to_cell = torch.zeros(total_pins, dtype=torch.long, device=device)
     pin_idx = 0
     for cell_idx, n_pins in enumerate(num_pins_per_cell):
         pin_to_cell[pin_idx : pin_idx + n_pins] = cell_idx
@@ -214,12 +251,17 @@ def generate_placement_input(num_macros, num_std_cells):
 
     for pin_idx in range(total_pins):
         pin_cell = pin_to_cell[pin_idx].item()
-        num_connections = torch.randint(1, 4, (1,)).item()  # 1-3 connections per pin
+        num_connections = torch.randint(
+            1,
+            4,
+            (1,),
+            device=device,
+        ).item()  # 1-3 connections per pin
 
         # Try to connect to pins from different cells
         for _ in range(num_connections):
             # Random candidate
-            other_pin = torch.randint(0, total_pins, (1,)).item()
+            other_pin = torch.randint(0, total_pins, (1,), device=device).item()
 
             # Skip self-connections and existing connections
             if other_pin == pin_idx or other_pin in adjacency[pin_idx]:
@@ -237,10 +279,10 @@ def generate_placement_input(num_macros, num_std_cells):
 
     # Convert to tensor and remove duplicates
     if edge_list:
-        edge_list = torch.tensor(edge_list, dtype=torch.long)
+        edge_list = torch.tensor(edge_list, dtype=torch.long, device=device)
         edge_list = torch.unique(edge_list, dim=0)
     else:
-        edge_list = torch.zeros((0, 2), dtype=torch.long)
+        edge_list = torch.zeros((0, 2), dtype=torch.long, device=device)
 
     print(f"\nGenerated placement data:")
     print(f"  Total cells: {total_cells}")
@@ -280,7 +322,7 @@ def wirelength_attraction_loss(cell_features, pin_features, edge_list):
         Scalar loss value
     """
     if edge_list.shape[0] == 0:
-        return torch.tensor(0.0, requires_grad=True)
+        return torch.tensor(0.0, requires_grad=True, device=cell_features.device)
 
     # Update absolute pin positions based on cell positions
     cell_positions = cell_features[:, 2:4]  # [N, 2]
@@ -365,7 +407,7 @@ def overlap_repulsion_loss(cell_features, pin_features, edge_list):
     
     N = cell_features.shape[0]
     if N <= 1:
-        return torch.tensor(0.0, requires_grad=True)
+        return torch.tensor(0.0, requires_grad=True, device=cell_features.device)
     
     x_col = cell_features[:, CellFeatureIdx.X]
     y_col = cell_features[:, CellFeatureIdx.Y]
@@ -416,10 +458,6 @@ def overlap_repulsion_loss(cell_features, pin_features, edge_list):
     #
     # Delete this placeholder and add your implementation:
 
-    # Placeholder - returns a constant loss (REPLACE THIS!)
-    return torch.tensor(1.0, requires_grad=True)
-
-
 def train_placement(
     cell_features,
     pin_features,
@@ -451,8 +489,14 @@ def train_placement(
             - initial_cell_features: Original cell positions (for comparison)
             - loss_history: Loss values over time
     """
+    device = cell_features.device
+    if device.type == "cpu":
+        device = get_best_device()
+
     # Clone features and create learnable positions
-    cell_features = cell_features.clone()
+    cell_features = cell_features.clone().to(device)
+    pin_features = pin_features.to(device)
+    edge_list = edge_list.to(device)
     initial_cell_features = cell_features.clone()
 
     # Make only cell positions require gradients
@@ -467,6 +511,7 @@ def train_placement(
     history_run_metadata = {
         "run_label": "train_placement",
         "run_started_at": datetime.now().isoformat(timespec="seconds"),
+        "device": str(device),
         "num_epochs": num_epochs,
         "lr": lr,
         "lambda_wirelength": lambda_wirelength,
@@ -583,10 +628,10 @@ def calculate_overlap_metrics(cell_features):
         }
 
     # Extract cell properties
-    positions = cell_features[:, 2:4].detach().numpy()  # [N, 2]
-    widths = cell_features[:, 4].detach().numpy()  # [N]
-    heights = cell_features[:, 5].detach().numpy()  # [N]
-    areas = cell_features[:, 0].detach().numpy()  # [N]
+    positions = cell_features[:, 2:4].detach().cpu().numpy()  # [N, 2]
+    widths = cell_features[:, 4].detach().cpu().numpy()  # [N]
+    heights = cell_features[:, 5].detach().cpu().numpy()  # [N]
+    areas = cell_features[:, 0].detach().cpu().numpy()  # [N]
 
     overlap_count = 0
     total_overlap_area = 0.0
@@ -644,9 +689,9 @@ def calculate_cells_with_overlaps(cell_features):
         return set()
 
     # Extract cell properties
-    positions = cell_features[:, 2:4].detach().numpy()
-    widths = cell_features[:, 4].detach().numpy()
-    heights = cell_features[:, 5].detach().numpy()
+    positions = cell_features[:, 2:4].detach().cpu().numpy()
+    widths = cell_features[:, 4].detach().cpu().numpy()
+    heights = cell_features[:, 5].detach().cpu().numpy()
 
     cells_with_overlaps = set()
 
@@ -753,9 +798,9 @@ def plot_placement(
             (ax2, final_cell_features, "Final Placement"),
         ]:
             N = cell_features.shape[0]
-            positions = cell_features[:, 2:4].detach().numpy()
-            widths = cell_features[:, 4].detach().numpy()
-            heights = cell_features[:, 5].detach().numpy()
+            positions = cell_features[:, 2:4].detach().cpu().numpy()
+            widths = cell_features[:, 4].detach().cpu().numpy()
+            heights = cell_features[:, 5].detach().cpu().numpy()
 
             # Draw cells
             for i in range(N):
@@ -812,7 +857,8 @@ def main():
     print("while minimizing wirelength.\n")
 
     # Set random seed for reproducibility
-    torch.manual_seed(42)
+    device = get_best_device()
+    seed_torch(42)
 
     # Generate placement problem
     num_macros = 3
@@ -821,16 +867,19 @@ def main():
     print(f"Generating placement problem:")
     print(f"  - {num_macros} macros")
     print(f"  - {num_std_cells} standard cells")
+    print(f"  - device: {device}")
 
     cell_features, pin_features, edge_list = generate_placement_input(
-        num_macros, num_std_cells
+        num_macros,
+        num_std_cells,
+        device=device,
     )
 
     # Initialize positions with random spread to reduce initial overlaps
     total_cells = cell_features.shape[0]
     spread_radius = 30.0
-    angles = torch.rand(total_cells) * 2 * 3.14159
-    radii = torch.rand(total_cells) * spread_radius
+    angles = torch.rand(total_cells, device=device) * 2 * 3.14159
+    radii = torch.rand(total_cells, device=device) * spread_radius
 
     cell_features[:, 2] = radii * torch.cos(angles)
     cell_features[:, 3] = radii * torch.sin(angles)
