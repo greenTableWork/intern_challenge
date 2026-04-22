@@ -191,6 +191,7 @@ def run_all_tests(args):
         "profile_tag": args.profile_tag,
         "torch_profiler_config": build_torch_profiler_config_from_args(args),
     }
+    max_workers = args.workers
 
     print("=" * 70)
     print("PLACEMENT CHALLENGE TEST SUITE")
@@ -205,6 +206,7 @@ def run_all_tests(args):
     print(f"  scheduler_kwargs: {training_config['scheduler_kwargs']}")
     print(f"  track_loss_history: {training_config['track_loss_history']}")
     print(f"  track_overlap_metrics: {training_config['track_overlap_metrics']}")
+    print(f"  workers: {max_workers}")
     print(f"  torch_profile: {training_config['torch_profiler_config'].enabled}")
     print()
 
@@ -216,8 +218,6 @@ def run_all_tests(args):
     else:
         print("Loss history tracking disabled.")
         print()
-
-    max_workers = 4
 
     for idx, (test_id, num_macros, num_std_cells, seed) in enumerate(ACTIVE_TEST_CASES, 1):
         size_category = (
@@ -231,48 +231,61 @@ def run_all_tests(args):
             f"{size_category} ({num_macros} macros, {num_std_cells} std cells)"
         )
         print(f"  Seed: {seed}")
-    print(f"Running up to {max_workers} tests concurrently")
+    if max_workers == 1:
+        print("Running serially")
+    else:
+        print(f"Running up to {max_workers} tests concurrently")
     print()
 
     wall_start_time = time.time()
-    try:
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            future_to_test_case = {
-                executor.submit(
-                    run_placement_test_case_with_config,
-                    test_case,
-                    loss_tracking_db_path,
-                    training_config,
-                ): test_case
-                for test_case in ACTIVE_TEST_CASES
-            }
-
-            completed_results = {}
-            for future in as_completed(future_to_test_case):
-                result = future.result()
-                completed_results[result["test_id"]] = result
-
-                status = "✓ PASS" if result["num_cells_with_overlaps"] == 0 else "✗ FAIL"
-                print(f"Completed test {result['test_id']}:")
-                print(f"  Device: {result['device']}")
-                print(
-                    f"  Overlap Ratio: {result['overlap_ratio']:.4f} "
-                    f"({result['num_cells_with_overlaps']}/{result['total_cells']} cells)"
-                )
-                print(f"  Normalized WL: {result['normalized_wl']:.4f}")
-                print(f"  Time: {result['elapsed_time']:.2f}s")
-                if result["loss_history_path"] is not None:
-                    print(f"  History: {result['loss_history_path']}")
-                print(f"  Status: {status}")
-                print()
-    except PermissionError:
-        print("Process pool unavailable in this environment; falling back to serial execution.")
-        print()
+    if max_workers == 1:
         completed_results = _run_tests_serial(
             ACTIVE_TEST_CASES,
             loss_tracking_db_path,
             training_config,
         )
+    else:
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                future_to_test_case = {
+                    executor.submit(
+                        run_placement_test_case_with_config,
+                        test_case,
+                        loss_tracking_db_path,
+                        training_config,
+                    ): test_case
+                    for test_case in ACTIVE_TEST_CASES
+                }
+
+                completed_results = {}
+                for future in as_completed(future_to_test_case):
+                    result = future.result()
+                    completed_results[result["test_id"]] = result
+
+                    status = "✓ PASS" if result["num_cells_with_overlaps"] == 0 else "✗ FAIL"
+                    print(f"Completed test {result['test_id']}:")
+                    print(f"  Device: {result['device']}")
+                    print(
+                        f"  Overlap Ratio: {result['overlap_ratio']:.4f} "
+                        f"({result['num_cells_with_overlaps']}/{result['total_cells']} cells)"
+                    )
+                    print(f"  Normalized WL: {result['normalized_wl']:.4f}")
+                    print(f"  Time: {result['elapsed_time']:.2f}s")
+                    if result["loss_history_path"] is not None:
+                        print(f"  History: {result['loss_history_path']}")
+                    print(f"  Status: {status}")
+                    print()
+        except PermissionError:
+            print(
+                "Process pool unavailable in this environment; "
+                "falling back to serial execution."
+            )
+            print()
+            completed_results = _run_tests_serial(
+                ACTIVE_TEST_CASES,
+                loss_tracking_db_path,
+                training_config,
+            )
 
     all_results = [
         completed_results[test_id]

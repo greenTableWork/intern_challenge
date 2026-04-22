@@ -5,6 +5,33 @@ from datetime import datetime
 
 DB_DIRNAME = "loss_tracking"
 DB_FILENAME_PREFIX = "loss_tracking"
+BASE_LOSS_HISTORY_FIELDS = (
+    "total_loss",
+    "wirelength_loss",
+    "overlap_loss",
+    "learning_rate",
+)
+OPTIONAL_LOSS_HISTORY_FIELDS = (
+    "overlap_count",
+    "total_overlap_area",
+    "max_overlap_area",
+)
+ALL_LOSS_HISTORY_FIELDS = BASE_LOSS_HISTORY_FIELDS + OPTIONAL_LOSS_HISTORY_FIELDS
+
+
+def get_expected_loss_history_fields(track_overlap_metrics=False):
+    """Return the expected loss-history series for a run configuration."""
+    if track_overlap_metrics:
+        return ALL_LOSS_HISTORY_FIELDS
+    return BASE_LOSS_HISTORY_FIELDS
+
+
+def create_loss_history(run_metadata=None, track_overlap_metrics=False):
+    """Create a loss-history container with the expected series predeclared."""
+    loss_history = {"run_metadata": dict(run_metadata or {})}
+    for field_name in get_expected_loss_history_fields(track_overlap_metrics):
+        loss_history[field_name] = []
+    return loss_history
 
 
 def get_loss_tracking_db_dir(output_dir):
@@ -74,6 +101,7 @@ def _initialize_schema(connection):
             total_loss REAL,
             wirelength_loss REAL,
             overlap_loss REAL,
+            learning_rate REAL,
             overlap_count INTEGER,
             total_overlap_area REAL,
             max_overlap_area REAL,
@@ -88,6 +116,16 @@ def _initialize_schema(connection):
             "seed": "INTEGER",
             "num_macros": "INTEGER",
             "num_std_cells": "INTEGER",
+        },
+    )
+    _ensure_columns(
+        connection,
+        "loss_history",
+        {
+            "learning_rate": "REAL",
+            "overlap_count": "INTEGER",
+            "total_overlap_area": "REAL",
+            "max_overlap_area": "REAL",
         },
     )
 
@@ -129,20 +167,14 @@ def save_loss_history_sqlite(loss_history, db_path, run_metadata=None):
     metadata.setdefault("run_id", timestamp)
     metadata.setdefault("saved_at", datetime.now().isoformat(timespec="seconds"))
 
-    total_loss = loss_history.get("total_loss", [])
-    wirelength_loss = loss_history.get("wirelength_loss", [])
-    overlap_loss = loss_history.get("overlap_loss", [])
-    overlap_count = loss_history.get("overlap_count", [])
-    total_overlap_area = loss_history.get("total_overlap_area", [])
-    max_overlap_area = loss_history.get("max_overlap_area", [])
+    history_series = {
+        field_name: loss_history.get(field_name, [])
+        for field_name in ALL_LOSS_HISTORY_FIELDS
+    }
 
     row_count = max(
-        len(total_loss),
-        len(wirelength_loss),
-        len(overlap_loss),
-        len(overlap_count),
-        len(total_overlap_area),
-        len(max_overlap_area),
+        (len(values) for values in history_series.values()),
+        default=0,
     )
 
     connection = _connect_db(db_path)
@@ -235,29 +267,13 @@ def save_loss_history_sqlite(loss_history, db_path, run_metadata=None):
                 (
                     metadata["run_id"],
                     epoch,
-                    _sqlite_scalar(
-                        total_loss[epoch] if epoch < len(total_loss) else None
-                    ),
-                    _sqlite_scalar(
-                        wirelength_loss[epoch]
-                        if epoch < len(wirelength_loss)
-                        else None
-                    ),
-                    _sqlite_scalar(
-                        overlap_loss[epoch] if epoch < len(overlap_loss) else None
-                    ),
-                    _sqlite_scalar(
-                        overlap_count[epoch] if epoch < len(overlap_count) else None
-                    ),
-                    _sqlite_scalar(
-                        total_overlap_area[epoch]
-                        if epoch < len(total_overlap_area)
-                        else None
-                    ),
-                    _sqlite_scalar(
-                        max_overlap_area[epoch]
-                        if epoch < len(max_overlap_area)
-                        else None
+                    *(
+                        _sqlite_scalar(
+                            history_series[field_name][epoch]
+                            if epoch < len(history_series[field_name])
+                            else None
+                        )
+                        for field_name in ALL_LOSS_HISTORY_FIELDS
                     ),
                 )
             )
@@ -270,11 +286,12 @@ def save_loss_history_sqlite(loss_history, db_path, run_metadata=None):
                 total_loss,
                 wirelength_loss,
                 overlap_loss,
+                learning_rate,
                 overlap_count,
                 total_overlap_area,
                 max_overlap_area
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             history_rows,
         )

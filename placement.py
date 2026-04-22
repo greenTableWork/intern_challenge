@@ -52,7 +52,11 @@ from learning_rate_scheduler_util import (
     build_scheduler_kwargs_from_args,
     create_lr_scheduler,
 )
-from loss_tracking_utils import create_loss_tracking_db, save_loss_history_sqlite
+from loss_tracking_utils import (
+    create_loss_history,
+    create_loss_tracking_db,
+    save_loss_history_sqlite,
+)
 from torch_profiler_util import (
     build_torch_profiler_config_from_args,
     create_torch_profiler_session,
@@ -576,21 +580,10 @@ def train_placement(
 
     loss_history = None
     if track_loss_history:
-        loss_history = {
-            "run_metadata": history_run_metadata,
-            "total_loss": [],
-            "wirelength_loss": [],
-            "overlap_loss": [],
-            "learning_rate": [],
-        }
-        if track_overlap_metrics:
-            loss_history.update(
-                {
-                    "overlap_count": [],
-                    "total_overlap_area": [],
-                    "max_overlap_area": [],
-                }
-            )
+        loss_history = create_loss_history(
+            run_metadata=history_run_metadata,
+            track_overlap_metrics=track_overlap_metrics,
+        )
 
     # Training loop
     profiler_output_dir = torch_profile_output_dir or OUTPUT_DIR

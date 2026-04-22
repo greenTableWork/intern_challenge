@@ -4,6 +4,13 @@ from benchmark_test_cases import TEST_CASES_BY_ID
 from learning_rate_scheduler_util import SCHEDULER_CHOICES
 
 
+def _positive_int(value):
+    parsed_value = int(value)
+    if parsed_value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed_value
+
+
 def parse_args():
     """Parse command line arguments for optional profiling."""
     parser = argparse.ArgumentParser()
@@ -192,5 +199,11 @@ def parse_args():
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Enable or disable per-epoch overlap-metric collection for loss tracking.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=_positive_int,
+        default=4,
+        help="Number of worker processes for test.py. Use 1 to run serially.",
     )
     return parser.parse_args()
