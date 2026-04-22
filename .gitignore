@@ -6,6 +6,7 @@
 
 */.ipynb_checkpoints/*
 profile/*
+torch_profile/*
 loss_history/*
 loss_tracking/*
 **/__pycache__/**

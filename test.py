@@ -145,6 +145,34 @@ def run_placement_test_case_with_config(test_case, loss_tracking_db_path, traini
     )
 
 
+def _run_tests_serial(test_cases, loss_tracking_db_path, training_config):
+    """Run test cases sequentially when process pools are unavailable."""
+    completed_results = {}
+    for test_case in test_cases:
+        result = run_placement_test_case_with_config(
+            test_case,
+            loss_tracking_db_path,
+            training_config,
+        )
+        completed_results[result["test_id"]] = result
+
+        status = "✓ PASS" if result["num_cells_with_overlaps"] == 0 else "✗ FAIL"
+        print(f"Completed test {result['test_id']}:")
+        print(f"  Device: {result['device']}")
+        print(
+            f"  Overlap Ratio: {result['overlap_ratio']:.4f} "
+            f"({result['num_cells_with_overlaps']}/{result['total_cells']} cells)"
+        )
+        print(f"  Normalized WL: {result['normalized_wl']:.4f}")
+        print(f"  Time: {result['elapsed_time']:.2f}s")
+        if result["loss_history_path"] is not None:
+            print(f"  History: {result['loss_history_path']}")
+        print(f"  Status: {status}")
+        print()
+
+    return completed_results
+
+
 def run_all_tests(args):
     """Run all test cases and compute aggregate metrics.
 
@@ -198,43 +226,53 @@ def run_all_tests(args):
             else "Large"
         )
 
-        print(f"Test {idx}/{len(TEST_CASES)}: {size_category} ({num_macros} macros, {num_std_cells} std cells)")
+        print(
+            f"Test {idx}/{len(ACTIVE_TEST_CASES)}: "
+            f"{size_category} ({num_macros} macros, {num_std_cells} std cells)"
+        )
         print(f"  Seed: {seed}")
     print(f"Running up to {max_workers} tests concurrently")
     print()
 
     wall_start_time = time.time()
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        future_to_test_case = {
-            executor.submit(
-                run_placement_test_case_with_config,
-                test_case,
-                loss_tracking_db_path,
-                training_config,
-            ): test_case
-            for test_case in ACTIVE_TEST_CASES
-        }
+    try:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            future_to_test_case = {
+                executor.submit(
+                    run_placement_test_case_with_config,
+                    test_case,
+                    loss_tracking_db_path,
+                    training_config,
+                ): test_case
+                for test_case in ACTIVE_TEST_CASES
+            }
 
-        completed_results = {}
-        for future in as_completed(future_to_test_case):
-            result = future.result()
-            completed_results[result["test_id"]] = result
+            completed_results = {}
+            for future in as_completed(future_to_test_case):
+                result = future.result()
+                completed_results[result["test_id"]] = result
 
-            status = "✓ PASS" if result["num_cells_with_overlaps"] == 0 else "✗ FAIL"
-            print(f"Completed test {result['test_id']}:")
-            print(
-                f"  Device: {result['device']}"
-            )
-            print(
-                f"  Overlap Ratio: {result['overlap_ratio']:.4f} "
-                f"({result['num_cells_with_overlaps']}/{result['total_cells']} cells)"
-            )
-            print(f"  Normalized WL: {result['normalized_wl']:.4f}")
-            print(f"  Time: {result['elapsed_time']:.2f}s")
-            if result["loss_history_path"] is not None:
-                print(f"  History: {result['loss_history_path']}")
-            print(f"  Status: {status}")
-            print()
+                status = "✓ PASS" if result["num_cells_with_overlaps"] == 0 else "✗ FAIL"
+                print(f"Completed test {result['test_id']}:")
+                print(f"  Device: {result['device']}")
+                print(
+                    f"  Overlap Ratio: {result['overlap_ratio']:.4f} "
+                    f"({result['num_cells_with_overlaps']}/{result['total_cells']} cells)"
+                )
+                print(f"  Normalized WL: {result['normalized_wl']:.4f}")
+                print(f"  Time: {result['elapsed_time']:.2f}s")
+                if result["loss_history_path"] is not None:
+                    print(f"  History: {result['loss_history_path']}")
+                print(f"  Status: {status}")
+                print()
+    except PermissionError:
+        print("Process pool unavailable in this environment; falling back to serial execution.")
+        print()
+        completed_results = _run_tests_serial(
+            ACTIVE_TEST_CASES,
+            loss_tracking_db_path,
+            training_config,
+        )
 
     all_results = [
         completed_results[test_id]
