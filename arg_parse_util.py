@@ -1,5 +1,6 @@
 import argparse
 
+from benchmark_test_cases import TEST_CASES_BY_ID
 from learning_rate_scheduler_util import SCHEDULER_CHOICES
 
 
@@ -15,6 +16,59 @@ def parse_args():
         "--profile-tag",
         default="",
         help="Optional tag to include in the profile output filename.",
+    )
+    parser.add_argument(
+        "--torch-profile",
+        action="store_true",
+        help="Enable torch.profiler trace capture during training.",
+    )
+    parser.add_argument(
+        "--torch-profile-wait",
+        type=int,
+        default=1,
+        help="Number of initial training steps to skip before torch profiler warmup.",
+    )
+    parser.add_argument(
+        "--torch-profile-warmup",
+        type=int,
+        default=1,
+        help="Number of warmup steps for torch profiler.",
+    )
+    parser.add_argument(
+        "--torch-profile-active",
+        type=int,
+        default=3,
+        help="Number of active recording steps for torch profiler.",
+    )
+    parser.add_argument(
+        "--torch-profile-repeat",
+        type=int,
+        default=1,
+        help="Number of wait/warmup/active cycles to record. Use 0 to repeat until the run ends.",
+    )
+    parser.add_argument(
+        "--torch-profile-record-shapes",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable or disable input-shape recording in torch profiler.",
+    )
+    parser.add_argument(
+        "--torch-profile-memory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable or disable memory tracking in torch profiler.",
+    )
+    parser.add_argument(
+        "--torch-profile-with-stack",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable or disable stack trace capture in torch profiler.",
+    )
+    parser.add_argument(
+        "--torch-profile-acc-events",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Accumulate profiler events across schedule cycles to avoid cycle-reset warnings.",
     )
     parser.add_argument(
         "--num-epochs",
@@ -39,6 +93,12 @@ def parse_args():
         type=int,
         default=42,
         help="Random seed used to generate and initialize the placement problem.",
+    )
+    parser.add_argument(
+        "--test-case-id",
+        type=int,
+        choices=sorted(TEST_CASES_BY_ID),
+        help="Optional benchmark test case to load. Overrides --num-macros, --num-std-cells, and --seed.",
     )
     parser.add_argument(
         "--lr",
@@ -126,5 +186,11 @@ def parse_args():
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Enable or disable loss-history collection and persistence.",
+    )
+    parser.add_argument(
+        "--track-overlap-metrics",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable or disable per-epoch overlap-metric collection for loss tracking.",
     )
     return parser.parse_args()

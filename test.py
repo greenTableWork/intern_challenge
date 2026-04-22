@@ -21,8 +21,12 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from arg_parse_util import parse_args
+from benchmark_test_cases import ACTIVE_TEST_CASES
 from learning_rate_scheduler_util import build_scheduler_kwargs_from_args
-from profiler_helper import run_with_optional_profile
+from torch_profiler_util import (
+    build_torch_profiler_config_from_args,
+    run_with_optional_profile,
+)
 
 # Import from the challenge file
 from placement import (
@@ -35,27 +39,6 @@ from placement import (
     train_placement,
 )
 from loss_tracking_utils import create_loss_tracking_db, save_loss_history_sqlite
-
-
-# Test case configurations: (test_id, num_macros, num_std_cells, seed)
-TEST_CASES = [
-    # Small designs
-    (1, 2, 20, 1001),
-    (2, 3, 25, 1002),
-    (3, 2, 30, 1003),
-    # Medium designs
-    (4, 3, 50, 1004),
-    (5, 4, 75, 1005),
-    (6, 5, 100, 1006),
-    # Large designs
-    (7, 5, 150, 1007),
-    (8, 7, 150, 1008),
-    (9, 8, 200, 1009),
-    (10, 10, 2000, 1010),
-    # Realistic designs
-    # (11, 10, 10000, 1011),
-    # (12, 10, 100000, 1012),
-]
 
 
 def run_placement_test(
@@ -110,11 +93,15 @@ def run_placement_test(
         verbose=False,  # Suppress per-epoch output
         run_metadata={
             "runner": "test.py",
+            "profile_tag": training_config["profile_tag"],
             "test_id": test_id,
             "seed": seed,
             "num_macros": num_macros,
             "num_std_cells": num_std_cells,
         },
+        torch_profiler_config=training_config["torch_profiler_config"],
+        torch_profile_output_dir=OUTPUT_DIR,
+        track_overlap_metrics=training_config["track_overlap_metrics"],
     )
     elapsed_time = time.time() - start_time
     loss_history_path = None
@@ -143,6 +130,8 @@ def run_placement_test(
         "overlap_ratio": metrics["overlap_ratio"],
         "normalized_wl": metrics["normalized_wl"],
     }
+
+
 def run_placement_test_case_with_config(test_case, loss_tracking_db_path, training_config):
     """Unpack a test-case tuple for multiprocessing execution with config."""
     test_id, num_macros, num_std_cells, seed = test_case
@@ -170,12 +159,15 @@ def run_all_tests(args):
         "scheduler_name": args.scheduler,
         "scheduler_kwargs": build_scheduler_kwargs_from_args(args),
         "track_loss_history": args.track_loss_history,
+        "track_overlap_metrics": args.track_overlap_metrics,
+        "profile_tag": args.profile_tag,
+        "torch_profiler_config": build_torch_profiler_config_from_args(args),
     }
 
     print("=" * 70)
     print("PLACEMENT CHALLENGE TEST SUITE")
     print("=" * 70)
-    print(f"\nRunning {len(TEST_CASES)} test cases with various netlist sizes...")
+    print(f"\nRunning {len(ACTIVE_TEST_CASES)} test cases with various netlist sizes...")
     print("Using hyperparameters:")
     print(f"  num_epochs: {training_config['num_epochs']}")
     print(f"  lr: {training_config['lr']}")
@@ -184,6 +176,8 @@ def run_all_tests(args):
     print(f"  scheduler: {training_config['scheduler_name']}")
     print(f"  scheduler_kwargs: {training_config['scheduler_kwargs']}")
     print(f"  track_loss_history: {training_config['track_loss_history']}")
+    print(f"  track_overlap_metrics: {training_config['track_overlap_metrics']}")
+    print(f"  torch_profile: {training_config['torch_profiler_config'].enabled}")
     print()
 
     loss_tracking_db_path = None
@@ -197,7 +191,7 @@ def run_all_tests(args):
 
     max_workers = 4
 
-    for idx, (test_id, num_macros, num_std_cells, seed) in enumerate(TEST_CASES, 1):
+    for idx, (test_id, num_macros, num_std_cells, seed) in enumerate(ACTIVE_TEST_CASES, 1):
         size_category = (
             "Small" if num_std_cells <= 30
             else "Medium" if num_std_cells <= 100
@@ -218,7 +212,7 @@ def run_all_tests(args):
                 loss_tracking_db_path,
                 training_config,
             ): test_case
-            for test_case in TEST_CASES
+            for test_case in ACTIVE_TEST_CASES
         }
 
         completed_results = {}
@@ -244,7 +238,7 @@ def run_all_tests(args):
 
     all_results = [
         completed_results[test_id]
-        for test_id, _, _, _ in TEST_CASES
+        for test_id, _, _, _ in ACTIVE_TEST_CASES
     ]
 
     # Compute aggregate statistics
