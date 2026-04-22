@@ -1,5 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
 
 
 def overlap_loss_from_pairwise_overlap_area(pairwise_overlap_area: torch.Tensor) -> torch.Tensor:
@@ -43,14 +44,14 @@ def main() -> None:
         label="loss(pairwise_overlap_area)",
     )
     ax.scatter(overlap_np, losses_np, s=12, alpha=0.35, color=line.get_color())
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.invert_xaxis()
     ax.set_xlabel("pairwise_overlap_area")
     ax.set_ylabel("loss")
     ax.set_title("Interactive Overlap Loss Curve")
     ax.grid(True, which="both", linestyle="--", alpha=0.4)
     ax.legend(loc="best")
+    ax.ticklabel_format(style="plain", axis="both", useOffset=False)
+    ax.xaxis.set_major_formatter(ScalarFormatter())
+    ax.yaxis.set_major_formatter(ScalarFormatter())
 
     annotation = ax.annotate(
         "",
@@ -67,7 +68,7 @@ def main() -> None:
         y_value = float(losses_np[index])
         annotation.xy = (x_value, y_value)
         annotation.set_text(
-            f"pairwise_overlap_area={x_value:.3e}\nloss={y_value:.3e}"
+            f"pairwise_overlap_area={x_value:,.3f}\nloss={y_value:,.3f}"
         )
         annotation.set_visible(True)
 
