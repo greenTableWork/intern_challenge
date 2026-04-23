@@ -17,6 +17,7 @@ Note: This test reuses the shared CLI hyperparameter options from placement.py
 and evaluates them across the benchmark test cases.
 """
 
+import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -35,6 +36,7 @@ from placement import (
     generate_placement_input,
     get_best_device,
     initialize_cell_positions,
+    plot_placement,
     seed_torch,
     train_placement,
 )
@@ -121,6 +123,14 @@ def run_placement_test(
     # Calculate final metrics using shared implementation
     final_cell_features = result["final_cell_features"]
     metrics = calculate_normalized_metrics(final_cell_features, pin_features, edge_list)
+    visualization_filename = f"placement_test_{test_id}_result.png"
+    plot_placement(
+        result["initial_cell_features"],
+        final_cell_features,
+        pin_features,
+        edge_list,
+        filename=visualization_filename,
+    )
 
     return {
         "test_id": test_id,
@@ -136,6 +146,7 @@ def run_placement_test(
         "num_cells_with_overlaps": metrics["num_cells_with_overlaps"],
         "overlap_ratio": metrics["overlap_ratio"],
         "normalized_wl": metrics["normalized_wl"],
+        "visualization_path": os.path.join(OUTPUT_DIR, visualization_filename),
     }
 
 
@@ -174,6 +185,7 @@ def _run_tests_serial(test_cases, loss_tracking_db_path, training_config):
         print(f"  Time: {result['elapsed_time']:.2f}s")
         if result["loss_history_path"] is not None:
             print(f"  History: {result['loss_history_path']}")
+        print(f"  Image: {result['visualization_path']}")
         print(f"  Status: {status}")
         print()
 
@@ -296,6 +308,7 @@ def run_all_tests(args):
                     print(f"  Time: {result['elapsed_time']:.2f}s")
                     if result["loss_history_path"] is not None:
                         print(f"  History: {result['loss_history_path']}")
+                    print(f"  Image: {result['visualization_path']}")
                     print(f"  Status: {status}")
                     print()
         except PermissionError:
