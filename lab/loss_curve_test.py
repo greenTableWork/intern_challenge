@@ -7,6 +7,7 @@ def overlap_loss_from_pairwise_overlap_area(pairwise_overlap_area: torch.Tensor)
     """Apply the same masking and normalization used in placement.py."""
     n = pairwise_overlap_area.shape[0]
     mask = torch.triu(torch.ones_like(pairwise_overlap_area), diagonal=1)
+    overlap_sclar = 150
     # normalization = torch.sqrt(
     #     torch.tensor(
     #         n,
@@ -15,7 +16,7 @@ def overlap_loss_from_pairwise_overlap_area(pairwise_overlap_area: torch.Tensor)
     #     )
     # )
     # return torch.log1p(torch.sum(pairwise_overlap_area * mask) / normalization)
-    return torch.log1p(torch.sum(pairwise_overlap_area * mask))
+    return torch.log1p(torch.sum(pairwise_overlap_area * mask)) * overlap_sclar
 
 
 def main() -> None:
