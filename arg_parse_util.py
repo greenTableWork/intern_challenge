@@ -201,6 +201,36 @@ def parse_args():
         help="Enable or disable per-epoch overlap-metric collection for loss tracking.",
     )
     parser.add_argument(
+        "--early-stop",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable or disable overlap-first early stopping during training.",
+    )
+    parser.add_argument(
+        "--early-stop-patience",
+        type=_positive_int,
+        default=75,
+        help="Patience before stopping when overlap stops improving.",
+    )
+    parser.add_argument(
+        "--early-stop-min-delta",
+        type=float,
+        default=1e-4,
+        help="Minimum improvement required to reset early-stop patience.",
+    )
+    parser.add_argument(
+        "--early-stop-overlap-threshold",
+        type=float,
+        default=1e-4,
+        help="Treat overlap below this value as effectively zero for early stopping.",
+    )
+    parser.add_argument(
+        "--early-stop-zero-overlap-patience",
+        type=_positive_int,
+        default=25,
+        help="Extra patience after zero-overlap is reached to keep reducing wirelength.",
+    )
+    parser.add_argument(
         "--workers",
         type=_positive_int,
         default=4,

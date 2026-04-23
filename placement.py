@@ -386,6 +386,84 @@ def wirelength_attraction_loss(cell_features, pin_features, edge_list):
     return ret
 
 
+def compute_pairwise_overlap_areas(cell_features):
+    """Return pairwise overlap areas for all cell pairs."""
+    num_cells = cell_features.shape[0]
+    if num_cells <= 1:
+        return torch.zeros(
+            (num_cells, num_cells),
+            device=cell_features.device,
+            dtype=cell_features.dtype,
+        )
+
+    x_col = cell_features[:, CellFeatureIdx.X]
+    y_col = cell_features[:, CellFeatureIdx.Y]
+    widths = cell_features[:, CellFeatureIdx.WIDTH]
+    heights = cell_features[:, CellFeatureIdx.HEIGHT]
+
+    x_delta = torch.abs(x_col.unsqueeze(1) - x_col.unsqueeze(0))
+    y_delta = torch.abs(y_col.unsqueeze(1) - y_col.unsqueeze(0))
+
+    x_span = (widths.unsqueeze(1) + widths.unsqueeze(0)) / 2
+    y_span = (heights.unsqueeze(1) + heights.unsqueeze(0)) / 2
+
+    overlap_x = torch.relu(x_span - x_delta)
+    overlap_y = torch.relu(y_span - y_delta)
+    return overlap_x * overlap_y
+
+
+def calculate_overlap_metrics_torch(cell_features):
+    """Calculate overlap metrics with vectorized torch operations."""
+    num_cells = cell_features.shape[0]
+    if num_cells <= 1:
+        zero = torch.tensor(0.0, device=cell_features.device, dtype=cell_features.dtype)
+        return {
+            "overlap_count": 0,
+            "total_overlap_area": 0.0,
+            "max_overlap_area": 0.0,
+            "overlap_percentage": 0.0,
+            "cells_with_overlap": 0,
+            "has_zero_overlap": True,
+            "total_overlap_area_tensor": zero,
+            "max_overlap_area_tensor": zero,
+        }
+
+    pairwise_overlap_area = compute_pairwise_overlap_areas(cell_features)
+    mask = torch.triu(
+        torch.ones_like(pairwise_overlap_area, dtype=torch.bool),
+        diagonal=1,
+    )
+    active_overlap_areas = pairwise_overlap_area[mask]
+    overlapping_pairs = active_overlap_areas > 0
+
+    overlap_count = int(overlapping_pairs.sum().item())
+    total_overlap_area = active_overlap_areas.sum()
+    max_overlap_area = (
+        active_overlap_areas.max()
+        if active_overlap_areas.numel() > 0
+        else total_overlap_area.new_zeros(())
+    )
+
+    overlap_matrix = (pairwise_overlap_area > 0) & mask
+    overlap_matrix = overlap_matrix | overlap_matrix.transpose(0, 1)
+    cells_with_overlap = int(overlap_matrix.any(dim=0).sum().item())
+    total_area = cell_features[:, CellFeatureIdx.AREA].sum()
+    overlap_percentage = (
+        overlap_count / num_cells * 100.0 if total_area.item() > 0 else 0.0
+    )
+
+    return {
+        "overlap_count": overlap_count,
+        "total_overlap_area": float(total_overlap_area.item()),
+        "max_overlap_area": float(max_overlap_area.item()),
+        "overlap_percentage": overlap_percentage,
+        "cells_with_overlap": cells_with_overlap,
+        "has_zero_overlap": overlap_count == 0,
+        "total_overlap_area_tensor": total_overlap_area,
+        "max_overlap_area_tensor": max_overlap_area,
+    }
+
+
 def overlap_repulsion_loss(cell_features, pin_features, edge_list):
     """Calculate loss to prevent cell overlaps.
 
@@ -430,54 +508,19 @@ def overlap_repulsion_loss(cell_features, pin_features, edge_list):
     Returns:
         Scalar loss value (should be 0 when no overlaps exist)
     """
-    
-    
     N = cell_features.shape[0]
     if N <= 1:
         return torch.tensor(0.0, requires_grad=True, device=cell_features.device)
-    
-    x_col = cell_features[:, CellFeatureIdx.X]
-    y_col = cell_features[:, CellFeatureIdx.Y]
 
-    x_delta = torch.abs(x_col.unsqueeze(1) - x_col.unsqueeze(0))
-    y_delta = torch.abs(y_col.unsqueeze(1) - y_col.unsqueeze(0))
-
-    # print("x_delta", x_delta)
-    # print("x_delta shape", x_delta.shape)
-    
-    widths = cell_features[:, CellFeatureIdx.WIDTH]
-    widths_i = widths.unsqueeze(1)
-    widths_j = widths.unsqueeze(0)
-    # print("widths", widths)
-    # print("widths.shape",widths.shape)
-    
-    heights = cell_features[:, CellFeatureIdx.HEIGHT]
-    heights_i = heights.unsqueeze(1)
-    heights_j = heights.unsqueeze(0)
-    # print("heights", heights)
-    # print("heights_i shape", heights_i.shape)
-
-    x_span = (widths_i + widths_j) / 2
-    y_span = (heights_i + heights_j) / 2
-
-    # print("x span", x_span)
-    # print("y span", y_span)
-
-
-    overlap_x = torch.relu(x_span - x_delta)
-    overlap_y = torch.relu(y_span - y_delta)
-
-    # print("overlap_x", overlap_x)
-    # print("overlap_y", overlap_y)
-
-    pairwise_overlap_area = overlap_x * overlap_y
+    pairwise_overlap_area = compute_pairwise_overlap_areas(cell_features)
     mask = torch.triu(torch.ones_like(pairwise_overlap_area), diagonal=1)
 
     # normalization = torch.sqrt(
     #     torch.tensor(N, device=pairwise_overlap_area.device, dtype=pairwise_overlap_area.dtype)
     # )
     # loss = torch.sum(pairwise_overlap_area * mask) / normalization
-    loss = torch.log1p(torch.sum(pairwise_overlap_area * mask))
+    overlap_sclar = 200
+    loss = torch.log1p(torch.sum(pairwise_overlap_area * mask)) * overlap_sclar
 
     return loss
 
@@ -507,6 +550,11 @@ def train_placement(
     torch_profiler_config=None,
     torch_profile_output_dir=None,
     track_overlap_metrics=False,
+    early_stop_enabled=True,
+    early_stop_patience=75,
+    early_stop_min_delta=1e-4,
+    early_stop_overlap_threshold=1e-4,
+    early_stop_zero_overlap_patience=25,
 ):
     """Train the placement optimization using gradient descent.
 
@@ -527,6 +575,11 @@ def train_placement(
         torch_profiler_config: Optional torch profiler configuration
         torch_profile_output_dir: Base directory for torch profiler artifacts
         track_overlap_metrics: Whether to collect per-epoch overlap metrics
+        early_stop_enabled: Whether to stop once overlap-first convergence stalls
+        early_stop_patience: Plateau patience before zero-overlap is reached
+        early_stop_min_delta: Minimum improvement to reset patience
+        early_stop_overlap_threshold: Treat overlap below this as effectively zero
+        early_stop_zero_overlap_patience: Extra patience after zero-overlap to keep improving wirelength
 
     Returns:
         Dictionary with:
@@ -570,6 +623,11 @@ def train_placement(
         "scheduler_kwargs": scheduler_kwargs,
         "track_loss_history": track_loss_history,
         "track_overlap_metrics": track_overlap_metrics,
+        "early_stop_enabled": early_stop_enabled,
+        "early_stop_patience": early_stop_patience,
+        "early_stop_min_delta": early_stop_min_delta,
+        "early_stop_overlap_threshold": early_stop_overlap_threshold,
+        "early_stop_zero_overlap_patience": early_stop_zero_overlap_patience,
         "log_interval": log_interval,
         "verbose": verbose,
         "total_cells": int(cell_features.shape[0]),
@@ -585,6 +643,16 @@ def train_placement(
             run_metadata=history_run_metadata,
             track_overlap_metrics=track_overlap_metrics,
         )
+
+    best_cell_positions = cell_positions.detach().clone()
+    best_overlap_score = float("inf")
+    best_zero_overlap_wl = float("inf")
+    best_epoch = -1
+    epochs_without_improvement = 0
+    zero_overlap_epochs_without_improvement = 0
+    zero_overlap_reached = False
+    stopped_early = False
+    stop_reason = ""
 
     # Training loop
     profiler_output_dir = torch_profile_output_dir or OUTPUT_DIR
@@ -628,16 +696,73 @@ def train_placement(
                 should_log_epoch = verbose and (
                     epoch % log_interval == 0 or epoch == num_epochs - 1
                 )
-                should_collect_overlap_metrics = (
-                    track_overlap_metrics and loss_history is not None
+                should_compute_overlap_metrics = (
+                    track_overlap_metrics
+                    or early_stop_enabled
+                    or should_log_epoch
                 )
-                if should_collect_overlap_metrics:
+                updated_cell_features = None
+                if should_compute_overlap_metrics:
                     with torch.profiler.record_function("placement/metrics"):
                         updated_cell_features = cell_features.clone()
                         updated_cell_features[:, 2:4] = cell_positions.detach()
-                        overlap_metrics = calculate_overlap_metrics(
+                        overlap_metrics = calculate_overlap_metrics_torch(
                             updated_cell_features
                         )
+
+                if early_stop_enabled:
+                    overlap_score = overlap_metrics["total_overlap_area"]
+                    has_zero_overlap = (
+                        overlap_metrics["overlap_count"] == 0
+                        or overlap_score <= early_stop_overlap_threshold
+                    )
+                    if has_zero_overlap:
+                        current_wl = wirelength_attraction_loss(
+                            updated_cell_features,
+                            pin_features,
+                            edge_list,
+                        ).item()
+                        if (
+                            not zero_overlap_reached
+                            or current_wl < best_zero_overlap_wl - early_stop_min_delta
+                        ):
+                            zero_overlap_reached = True
+                            best_zero_overlap_wl = current_wl
+                            best_cell_positions = cell_positions.detach().clone()
+                            best_epoch = epoch
+                            zero_overlap_epochs_without_improvement = 0
+                        else:
+                            zero_overlap_epochs_without_improvement += 1
+
+                        if (
+                            zero_overlap_reached
+                            and zero_overlap_epochs_without_improvement
+                            >= early_stop_zero_overlap_patience
+                        ):
+                            stopped_early = True
+                            stop_reason = "zero_overlap_plateau"
+                    else:
+                        if zero_overlap_reached:
+                            zero_overlap_epochs_without_improvement += 1
+                            if (
+                                zero_overlap_epochs_without_improvement
+                                >= early_stop_zero_overlap_patience
+                            ):
+                                stopped_early = True
+                                stop_reason = "zero_overlap_plateau"
+                        else:
+                            if overlap_score < best_overlap_score - early_stop_min_delta:
+                                best_overlap_score = overlap_score
+                                best_cell_positions = cell_positions.detach().clone()
+                                best_epoch = epoch
+                                epochs_without_improvement = 0
+                            else:
+                                epochs_without_improvement += 1
+
+                            if epochs_without_improvement >= early_stop_patience:
+                                stopped_early = True
+                                stop_reason = "overlap_plateau"
+                should_collect_overlap_metrics = track_overlap_metrics and loss_history is not None
 
                 if loss_history is not None:
                     loss_history["total_loss"].append(total_loss.item())
@@ -666,17 +791,36 @@ def train_placement(
                         print(
                             f"  Total Overlap Area: {overlap_metrics['total_overlap_area']:.6f}"
                         )
+                    if early_stop_enabled:
+                        print(f"  Best Epoch: {best_epoch}")
+
+                if stopped_early:
+                    if verbose:
+                        print(
+                            f"Early stopping at epoch {epoch} "
+                            f"with reason={stop_reason} best_epoch={best_epoch}"
+                        )
+                    break
 
             profiler_session.step()
 
     # Create final cell features
     final_cell_features = cell_features.clone()
-    final_cell_features[:, 2:4] = cell_positions.detach()
+    final_positions = best_cell_positions if early_stop_enabled else cell_positions.detach()
+    final_cell_features[:, 2:4] = final_positions
+
+    if loss_history is not None:
+        loss_history["run_metadata"]["stopped_early"] = stopped_early
+        loss_history["run_metadata"]["stop_reason"] = stop_reason
+        loss_history["run_metadata"]["best_epoch"] = best_epoch
 
     return {
         "final_cell_features": final_cell_features,
         "initial_cell_features": initial_cell_features,
         "loss_history": loss_history,
+        "stopped_early": stopped_early,
+        "stop_reason": stop_reason,
+        "best_epoch": best_epoch,
     }
 
 
@@ -1026,6 +1170,11 @@ def main(args):
         torch_profiler_config=torch_profiler_config,
         torch_profile_output_dir=OUTPUT_DIR,
         track_overlap_metrics=args.track_overlap_metrics,
+        early_stop_enabled=args.early_stop,
+        early_stop_patience=args.early_stop_patience,
+        early_stop_min_delta=args.early_stop_min_delta,
+        early_stop_overlap_threshold=args.early_stop_overlap_threshold,
+        early_stop_zero_overlap_patience=args.early_stop_zero_overlap_patience,
     )
     if args.track_loss_history:
         loss_history_path = save_loss_history_sqlite(

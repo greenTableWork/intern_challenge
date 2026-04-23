@@ -85,6 +85,11 @@ def run_optuna_search(
                     "num_macros": num_macros,
                     "num_std_cells": num_std_cells,
                 },
+                early_stop_enabled=args.early_stop,
+                early_stop_patience=args.early_stop_patience,
+                early_stop_min_delta=args.early_stop_min_delta,
+                early_stop_overlap_threshold=args.early_stop_overlap_threshold,
+                early_stop_zero_overlap_patience=args.early_stop_zero_overlap_patience,
             )
 
             metrics = calculate_normalized_metrics(

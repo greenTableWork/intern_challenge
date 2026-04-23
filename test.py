@@ -102,6 +102,13 @@ def run_placement_test(
         torch_profiler_config=training_config["torch_profiler_config"],
         torch_profile_output_dir=OUTPUT_DIR,
         track_overlap_metrics=training_config["track_overlap_metrics"],
+        early_stop_enabled=training_config["early_stop_enabled"],
+        early_stop_patience=training_config["early_stop_patience"],
+        early_stop_min_delta=training_config["early_stop_min_delta"],
+        early_stop_overlap_threshold=training_config["early_stop_overlap_threshold"],
+        early_stop_zero_overlap_patience=training_config[
+            "early_stop_zero_overlap_patience"
+        ],
     )
     elapsed_time = time.time() - start_time
     loss_history_path = None
@@ -188,6 +195,11 @@ def run_all_tests(args):
         "scheduler_kwargs": build_scheduler_kwargs_from_args(args),
         "track_loss_history": args.track_loss_history,
         "track_overlap_metrics": args.track_overlap_metrics,
+        "early_stop_enabled": args.early_stop,
+        "early_stop_patience": args.early_stop_patience,
+        "early_stop_min_delta": args.early_stop_min_delta,
+        "early_stop_overlap_threshold": args.early_stop_overlap_threshold,
+        "early_stop_zero_overlap_patience": args.early_stop_zero_overlap_patience,
         "profile_tag": args.profile_tag,
         "torch_profiler_config": build_torch_profiler_config_from_args(args),
     }
@@ -206,6 +218,17 @@ def run_all_tests(args):
     print(f"  scheduler_kwargs: {training_config['scheduler_kwargs']}")
     print(f"  track_loss_history: {training_config['track_loss_history']}")
     print(f"  track_overlap_metrics: {training_config['track_overlap_metrics']}")
+    print(f"  early_stop_enabled: {training_config['early_stop_enabled']}")
+    print(f"  early_stop_patience: {training_config['early_stop_patience']}")
+    print(f"  early_stop_min_delta: {training_config['early_stop_min_delta']}")
+    print(
+        "  early_stop_overlap_threshold: "
+        f"{training_config['early_stop_overlap_threshold']}"
+    )
+    print(
+        "  early_stop_zero_overlap_patience: "
+        f"{training_config['early_stop_zero_overlap_patience']}"
+    )
     print(f"  workers: {max_workers}")
     print(f"  torch_profile: {training_config['torch_profiler_config'].enabled}")
     print()
