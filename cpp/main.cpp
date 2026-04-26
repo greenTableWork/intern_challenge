@@ -9,12 +9,18 @@
 #include <torch/mps.h>
 #include <torch/torch.h>
 
+#include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -26,6 +32,8 @@ struct CliOptions {
     int num_macros = 3;
     int num_std_cells = 10;
     int seed = 42;
+    bool write_output_files = false;
+    std::string output_dir = ".";
 };
 
 std::string deviceTypeName(c10::DeviceType device) {
@@ -97,6 +105,493 @@ std::optional<placement::BenchmarkCase> findBenchmarkCase(int test_case_id) {
     return std::nullopt;
 }
 
+std::string formatDouble(double value) {
+    std::ostringstream stream;
+    stream << std::setprecision(17) << value;
+    return stream.str();
+}
+
+std::string boolText(bool value) {
+    return value ? "true" : "false";
+}
+
+std::string csvEscape(std::string_view value) {
+    if (value.find_first_of("\",\n\r") == std::string_view::npos) {
+        return std::string(value);
+    }
+
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    escaped.push_back('"');
+    for (char ch : value) {
+        if (ch == '"') {
+            escaped.push_back('"');
+        }
+        escaped.push_back(ch);
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+std::string jsonEscape(std::string_view value) {
+    std::ostringstream escaped;
+    for (unsigned char ch : value) {
+        switch (ch) {
+            case '"':
+                escaped << "\\\"";
+                break;
+            case '\\':
+                escaped << "\\\\";
+                break;
+            case '\b':
+                escaped << "\\b";
+                break;
+            case '\f':
+                escaped << "\\f";
+                break;
+            case '\n':
+                escaped << "\\n";
+                break;
+            case '\r':
+                escaped << "\\r";
+                break;
+            case '\t':
+                escaped << "\\t";
+                break;
+            default:
+                if (ch < 0x20) {
+                    escaped << "\\u" << std::hex << std::setw(4)
+                            << std::setfill('0') << static_cast<int>(ch)
+                            << std::dec << std::setfill(' ');
+                } else {
+                    escaped << static_cast<char>(ch);
+                }
+                break;
+        }
+    }
+    return escaped.str();
+}
+
+std::string jsonString(std::string_view value) {
+    std::string quoted = "\"";
+    quoted += jsonEscape(value);
+    quoted += "\"";
+    return quoted;
+}
+
+std::string jsonDouble(double value) {
+    if (!std::isfinite(value)) {
+        return "null";
+    }
+    return formatDouble(value);
+}
+
+std::string jsonBool(bool value) {
+    return boolText(value);
+}
+
+std::filesystem::path outputFilePath(
+    const CliOptions& options,
+    std::string_view file_name) {
+    const std::filesystem::path output_dir =
+        options.output_dir.empty() ? std::filesystem::path(".")
+                                   : std::filesystem::path(options.output_dir);
+    return output_dir / std::string(file_name);
+}
+
+void writeTextFile(
+    const std::filesystem::path& file_path,
+    const std::string& contents) {
+    const std::filesystem::path parent_path = file_path.parent_path();
+    if (!parent_path.empty()) {
+        std::filesystem::create_directories(parent_path);
+    }
+
+    std::ofstream output(file_path, std::ios::out | std::ios::trunc);
+    if (!output) {
+        throw std::runtime_error(
+            "Unable to open output file: " + file_path.string());
+    }
+    output << contents;
+    if (!output) {
+        throw std::runtime_error(
+            "Unable to write output file: " + file_path.string());
+    }
+}
+
+void appendCsvRow(
+    std::ostringstream& output,
+    const std::vector<std::string>& fields) {
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+        if (index > 0) {
+            output << ",";
+        }
+        output << csvEscape(fields[index]);
+    }
+    output << "\n";
+}
+
+void writeCsvFile(
+    const std::filesystem::path& file_path,
+    const std::vector<std::string>& header,
+    const std::vector<std::vector<std::string>>& rows) {
+    std::ostringstream output;
+    appendCsvRow(output, header);
+    for (const std::vector<std::string>& row : rows) {
+        appendCsvRow(output, row);
+    }
+    writeTextFile(file_path, output.str());
+}
+
+void appendJsonField(
+    std::ostringstream& output,
+    int indent,
+    std::string_view key,
+    const std::string& value,
+    bool trailing_comma) {
+    output << std::string(indent, ' ') << jsonString(key) << ": " << value;
+    if (trailing_comma) {
+        output << ",";
+    }
+    output << "\n";
+}
+
+using JsonField = std::pair<std::string, std::string>;
+
+void appendJsonObject(
+    std::ostringstream& output,
+    const std::vector<JsonField>& fields,
+    int indent) {
+    output << std::string(indent, ' ') << "{\n";
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+        appendJsonField(
+            output,
+            indent + 2,
+            fields[index].first,
+            fields[index].second,
+            index + 1 < fields.size());
+    }
+    output << std::string(indent, ' ') << "}";
+}
+
+std::vector<std::string> benchmarkResultHeader() {
+    return {
+        "test_id",
+        "num_macros",
+        "num_std_cells",
+        "total_cells",
+        "num_nets",
+        "seed",
+        "device",
+        "elapsed_seconds",
+        "num_cells_with_overlaps",
+        "overlap_ratio",
+        "normalized_wl",
+        "passed",
+    };
+}
+
+std::vector<std::string> benchmarkResultRow(
+    const placement::BenchmarkResult& result) {
+    return {
+        std::to_string(result.test_id),
+        std::to_string(result.num_macros),
+        std::to_string(result.num_std_cells),
+        std::to_string(result.total_cells),
+        std::to_string(result.num_nets),
+        std::to_string(result.seed),
+        deviceTypeName(result.device),
+        formatDouble(result.elapsed_seconds),
+        std::to_string(result.num_cells_with_overlaps),
+        formatDouble(result.overlap_ratio),
+        formatDouble(result.normalized_wl),
+        boolText(result.passed),
+    };
+}
+
+std::vector<JsonField> benchmarkResultJsonFields(
+    const placement::BenchmarkResult& result) {
+    return {
+        {"test_id", std::to_string(result.test_id)},
+        {"num_macros", std::to_string(result.num_macros)},
+        {"num_std_cells", std::to_string(result.num_std_cells)},
+        {"total_cells", std::to_string(result.total_cells)},
+        {"num_nets", std::to_string(result.num_nets)},
+        {"seed", std::to_string(result.seed)},
+        {"device", jsonString(deviceTypeName(result.device))},
+        {"elapsed_seconds", jsonDouble(result.elapsed_seconds)},
+        {"num_cells_with_overlaps",
+         std::to_string(result.num_cells_with_overlaps)},
+        {"overlap_ratio", jsonDouble(result.overlap_ratio)},
+        {"normalized_wl", jsonDouble(result.normalized_wl)},
+        {"passed", jsonBool(result.passed)},
+    };
+}
+
+std::vector<std::string> singlePlacementHeader() {
+    return {
+        "run_type",
+        "test_case_id",
+        "seed",
+        "device",
+        "num_macros",
+        "num_std_cells",
+        "total_cells",
+        "num_nets",
+        "initial_overlap_count",
+        "initial_total_overlap_area",
+        "initial_max_overlap_area",
+        "initial_overlap_percentage",
+        "initial_cells_with_overlap",
+        "initial_has_zero_overlap",
+        "final_overlap_count",
+        "final_total_overlap_area",
+        "final_max_overlap_area",
+        "final_overlap_percentage",
+        "final_cells_with_overlap",
+        "final_has_zero_overlap",
+        "normalized_overlap_ratio",
+        "normalized_wl",
+        "normalized_num_cells_with_overlaps",
+        "normalized_total_cells",
+        "normalized_num_nets",
+        "passed",
+        "stopped_early",
+        "stop_reason",
+        "best_epoch",
+        "num_epochs",
+        "early_stop_enabled",
+        "early_stop_patience",
+        "early_stop_min_delta",
+        "early_stop_overlap_threshold",
+        "early_stop_zero_overlap_patience",
+    };
+}
+
+std::vector<std::string> singlePlacementRow(
+    const placement::BenchmarkCase& selected_case,
+    const placement::TrainingConfig& config,
+    const placement::OverlapMetrics& initial_metrics,
+    const placement::OverlapMetrics& final_metrics,
+    const placement::Metrics& normalized_metrics,
+    const placement::TrainingResult& training_result,
+    bool passed) {
+    return {
+        "single",
+        std::to_string(selected_case.test_id),
+        std::to_string(selected_case.seed),
+        deviceTypeName(config.device),
+        std::to_string(selected_case.num_macros),
+        std::to_string(selected_case.num_std_cells),
+        std::to_string(normalized_metrics.total_cells),
+        std::to_string(normalized_metrics.num_nets),
+        std::to_string(initial_metrics.overlap_count),
+        formatDouble(initial_metrics.total_overlap_area),
+        formatDouble(initial_metrics.max_overlap_area),
+        formatDouble(initial_metrics.overlap_percentage),
+        std::to_string(initial_metrics.cells_with_overlap),
+        boolText(initial_metrics.has_zero_overlap),
+        std::to_string(final_metrics.overlap_count),
+        formatDouble(final_metrics.total_overlap_area),
+        formatDouble(final_metrics.max_overlap_area),
+        formatDouble(final_metrics.overlap_percentage),
+        std::to_string(final_metrics.cells_with_overlap),
+        boolText(final_metrics.has_zero_overlap),
+        formatDouble(normalized_metrics.overlap_ratio),
+        formatDouble(normalized_metrics.normalized_wl),
+        std::to_string(normalized_metrics.num_cells_with_overlaps),
+        std::to_string(normalized_metrics.total_cells),
+        std::to_string(normalized_metrics.num_nets),
+        boolText(passed),
+        boolText(training_result.stopped_early),
+        training_result.stop_reason,
+        std::to_string(training_result.best_epoch),
+        std::to_string(config.num_epochs),
+        boolText(config.early_stop_enabled),
+        std::to_string(config.early_stop_patience),
+        formatDouble(config.early_stop_min_delta),
+        formatDouble(config.early_stop_overlap_threshold),
+        std::to_string(config.early_stop_zero_overlap_patience),
+    };
+}
+
+std::vector<JsonField> singlePlacementJsonFields(
+    const placement::BenchmarkCase& selected_case,
+    const placement::TrainingConfig& config,
+    const placement::OverlapMetrics& initial_metrics,
+    const placement::OverlapMetrics& final_metrics,
+    const placement::Metrics& normalized_metrics,
+    const placement::TrainingResult& training_result,
+    bool passed) {
+    return {
+        {"run_type", jsonString("single")},
+        {"test_case_id", std::to_string(selected_case.test_id)},
+        {"seed", std::to_string(selected_case.seed)},
+        {"device", jsonString(deviceTypeName(config.device))},
+        {"num_macros", std::to_string(selected_case.num_macros)},
+        {"num_std_cells", std::to_string(selected_case.num_std_cells)},
+        {"total_cells", std::to_string(normalized_metrics.total_cells)},
+        {"num_nets", std::to_string(normalized_metrics.num_nets)},
+        {"initial_overlap_count",
+         std::to_string(initial_metrics.overlap_count)},
+        {"initial_total_overlap_area",
+         jsonDouble(initial_metrics.total_overlap_area)},
+        {"initial_max_overlap_area",
+         jsonDouble(initial_metrics.max_overlap_area)},
+        {"initial_overlap_percentage",
+         jsonDouble(initial_metrics.overlap_percentage)},
+        {"initial_cells_with_overlap",
+         std::to_string(initial_metrics.cells_with_overlap)},
+        {"initial_has_zero_overlap",
+         jsonBool(initial_metrics.has_zero_overlap)},
+        {"final_overlap_count", std::to_string(final_metrics.overlap_count)},
+        {"final_total_overlap_area",
+         jsonDouble(final_metrics.total_overlap_area)},
+        {"final_max_overlap_area", jsonDouble(final_metrics.max_overlap_area)},
+        {"final_overlap_percentage",
+         jsonDouble(final_metrics.overlap_percentage)},
+        {"final_cells_with_overlap",
+         std::to_string(final_metrics.cells_with_overlap)},
+        {"final_has_zero_overlap", jsonBool(final_metrics.has_zero_overlap)},
+        {"normalized_overlap_ratio",
+         jsonDouble(normalized_metrics.overlap_ratio)},
+        {"normalized_wl", jsonDouble(normalized_metrics.normalized_wl)},
+        {"normalized_num_cells_with_overlaps",
+         std::to_string(normalized_metrics.num_cells_with_overlaps)},
+        {"normalized_total_cells",
+         std::to_string(normalized_metrics.total_cells)},
+        {"normalized_num_nets", std::to_string(normalized_metrics.num_nets)},
+        {"passed", jsonBool(passed)},
+        {"stopped_early", jsonBool(training_result.stopped_early)},
+        {"stop_reason", jsonString(training_result.stop_reason)},
+        {"best_epoch", std::to_string(training_result.best_epoch)},
+        {"num_epochs", std::to_string(config.num_epochs)},
+        {"early_stop_enabled", jsonBool(config.early_stop_enabled)},
+        {"early_stop_patience", std::to_string(config.early_stop_patience)},
+        {"early_stop_min_delta", jsonDouble(config.early_stop_min_delta)},
+        {"early_stop_overlap_threshold",
+         jsonDouble(config.early_stop_overlap_threshold)},
+        {"early_stop_zero_overlap_patience",
+         std::to_string(config.early_stop_zero_overlap_patience)},
+    };
+}
+
+void writeSinglePlacementArtifacts(
+    const CliOptions& options,
+    const placement::BenchmarkCase& selected_case,
+    const placement::TrainingConfig& config,
+    const placement::OverlapMetrics& initial_metrics,
+    const placement::OverlapMetrics& final_metrics,
+    const placement::Metrics& normalized_metrics,
+    const placement::TrainingResult& training_result,
+    bool passed) {
+    writeCsvFile(
+        outputFilePath(options, "placement_result_summary.csv"),
+        singlePlacementHeader(),
+        {singlePlacementRow(
+            selected_case,
+            config,
+            initial_metrics,
+            final_metrics,
+            normalized_metrics,
+            training_result,
+            passed)});
+
+    std::ostringstream json;
+    appendJsonObject(
+        json,
+        singlePlacementJsonFields(
+            selected_case,
+            config,
+            initial_metrics,
+            final_metrics,
+            normalized_metrics,
+            training_result,
+            passed),
+        0);
+    json << "\n";
+    writeTextFile(outputFilePath(options, "placement_result_summary.json"), json.str());
+}
+
+void writeBenchmarkArtifacts(
+    const CliOptions& options,
+    const placement::BenchmarkSummary& summary) {
+    std::vector<std::vector<std::string>> case_rows;
+    case_rows.reserve(summary.results.size());
+    for (const placement::BenchmarkResult& result : summary.results) {
+        case_rows.push_back(benchmarkResultRow(result));
+    }
+    writeCsvFile(
+        outputFilePath(options, "placement_benchmark_cases.csv"),
+        benchmarkResultHeader(),
+        case_rows);
+
+    writeCsvFile(
+        outputFilePath(options, "placement_benchmark_summary.csv"),
+        {"total_cases",
+         "average_overlap",
+         "average_wirelength",
+         "total_elapsed_seconds",
+         "passed_count",
+         "failed_count"},
+        {{std::to_string(summary.results.size()),
+          formatDouble(summary.average_overlap),
+          formatDouble(summary.average_wirelength),
+          formatDouble(summary.total_elapsed_seconds),
+          std::to_string(summary.passed_count),
+          std::to_string(summary.failed_count)}});
+
+    std::ostringstream json;
+    json << "{\n";
+    appendJsonField(
+        json,
+        2,
+        "total_cases",
+        std::to_string(summary.results.size()),
+        true);
+    appendJsonField(
+        json,
+        2,
+        "average_overlap",
+        jsonDouble(summary.average_overlap),
+        true);
+    appendJsonField(
+        json,
+        2,
+        "average_wirelength",
+        jsonDouble(summary.average_wirelength),
+        true);
+    appendJsonField(
+        json,
+        2,
+        "total_elapsed_seconds",
+        jsonDouble(summary.total_elapsed_seconds),
+        true);
+    appendJsonField(
+        json,
+        2,
+        "passed_count",
+        std::to_string(summary.passed_count),
+        true);
+    appendJsonField(
+        json,
+        2,
+        "failed_count",
+        std::to_string(summary.failed_count),
+        true);
+    json << "  \"cases\": [\n";
+    for (std::size_t index = 0; index < summary.results.size(); ++index) {
+        appendJsonObject(json, benchmarkResultJsonFields(summary.results[index]), 4);
+        if (index + 1 < summary.results.size()) {
+            json << ",";
+        }
+        json << "\n";
+    }
+    json << "  ]\n";
+    json << "}\n";
+    writeTextFile(outputFilePath(options, "placement_benchmark_summary.json"), json.str());
+}
+
 void printRule(char c = '=') {
     std::cout << std::string(70, c) << "\n";
 }
@@ -139,7 +634,9 @@ void printBenchmarkResult(const placement::BenchmarkResult& result) {
     std::cout << "  Status: " << status << "\n\n";
 }
 
-int runBenchmark(const placement::TrainingConfig& config) {
+int runBenchmark(
+    const CliOptions& options,
+    const placement::TrainingConfig& config) {
     printRule();
     std::cout << "PLACEMENT CHALLENGE TEST SUITE\n";
     printRule();
@@ -180,6 +677,9 @@ int runBenchmark(const placement::TrainingConfig& config) {
               << summary.total_elapsed_seconds << "s\n";
     std::cout << "Passed: " << summary.passed_count << "\n";
     std::cout << "Failed: " << summary.failed_count << "\n";
+    if (options.write_output_files) {
+        writeBenchmarkArtifacts(options, summary);
+    }
     return 0;
 }
 
@@ -284,13 +784,26 @@ int runSinglePlacement(
     printRule();
     std::cout << "SUCCESS CRITERIA\n";
     printRule();
-    if (normalized_metrics.num_cells_with_overlaps == 0) {
+    const bool passed = normalized_metrics.num_cells_with_overlaps == 0;
+    if (passed) {
         std::cout << "PASS: No overlapping cells.\n";
-        return 0;
+    } else {
+        std::cout << "FAIL: Overlaps remain in "
+                  << normalized_metrics.num_cells_with_overlaps << " cells.\n";
     }
 
-    std::cout << "FAIL: Overlaps remain in "
-              << normalized_metrics.num_cells_with_overlaps << " cells.\n";
+    if (options.write_output_files) {
+        writeSinglePlacementArtifacts(
+            options,
+            selected_case,
+            config,
+            initial_metrics,
+            final_overlap_metrics,
+            normalized_metrics,
+            training_result,
+            passed);
+    }
+
     return 0;
 }
 
@@ -320,6 +833,14 @@ void configureCli(
         options.num_std_cells,
         "Number of standard cells for a single placement run.");
     app.add_option("--seed", options.seed, "Random seed for a single placement run.");
+    app.add_flag(
+        "--write-output-files",
+        options.write_output_files,
+        "Write notebook-friendly CSV and JSON output artifacts.");
+    app.add_option(
+        "--output-dir",
+        options.output_dir,
+        "Directory for output artifacts when --write-output-files is set.");
 
     app.add_option(
         "--num-epochs",
@@ -443,7 +964,7 @@ int main(int argc, char** argv) {
 
         if (options.run_benchmark) {
             config.verbose = false;
-            return runBenchmark(config);
+            return runBenchmark(options, config);
         }
         return runSinglePlacement(options, config);
     } catch (const c10::Error& error) {
