@@ -1,6 +1,7 @@
 #include "placement/generation.h"
 #include "placement/losses.h"
 #include "placement/metrics.h"
+#include "placement/training.h"
 
 #include <torch/torch.h>
 
@@ -228,6 +229,151 @@ void lossesBackpropagateThroughCellPositions() {
     expect(positions.grad().abs().sum().item<double>() > 0.0, "nonzero gradients");
 }
 
+void trainingWithNoEpochsReturnsInitialPlacement() {
+    const auto float_options = torch::TensorOptions().dtype(torch::kFloat32);
+    const auto long_options = torch::TensorOptions().dtype(torch::kInt64);
+
+    const auto cell_features = torch::tensor(
+        {
+            {1.0F, 1.0F, 0.0F, 0.0F, 1.0F, 1.0F},
+            {1.0F, 1.0F, 4.0F, 0.0F, 1.0F, 1.0F},
+        },
+        float_options);
+    const auto pin_features = torch::tensor(
+        {
+            {0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
+            {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
+        },
+        float_options);
+    const auto edge_list = torch::tensor({{0LL, 1LL}}, long_options);
+
+    placement::TrainingConfig config;
+    config.num_epochs = 0;
+    config.verbose = false;
+
+    const placement::TrainingResult result =
+        placement::trainPlacement(cell_features, pin_features, edge_list, config);
+    expect(
+        torch::allclose(result.initial_cell_features, cell_features),
+        "zero-epoch initial features");
+    expect(
+        torch::allclose(result.final_cell_features, cell_features),
+        "zero-epoch final features");
+    expect(!result.stopped_early, "zero-epoch does not stop early");
+    expect(result.best_epoch == -1, "zero-epoch best epoch");
+}
+
+void trainingReducesOverlapLoss() {
+    const auto float_options = torch::TensorOptions().dtype(torch::kFloat32);
+    const auto long_options = torch::TensorOptions().dtype(torch::kInt64);
+
+    const auto cell_features = torch::tensor(
+        {
+            {4.0F, 1.0F, 0.0F, 0.0F, 2.0F, 2.0F},
+            {4.0F, 1.0F, 1.0F, 0.0F, 2.0F, 2.0F},
+        },
+        float_options);
+    const auto pin_features = torch::zeros({0, 7}, float_options);
+    const auto edge_list = torch::zeros({0, 2}, long_options);
+
+    placement::TrainingConfig config;
+    config.num_epochs = 40;
+    config.lr = 0.1;
+    config.lambda_wirelength = 0.0;
+    config.lambda_overlap = 1.0;
+    config.scheduler_name = "none";
+    config.early_stop_enabled = false;
+    config.verbose = false;
+
+    const double initial_overlap =
+        placement::calculateOverlapMetrics(cell_features).total_overlap_area;
+    const placement::TrainingResult result =
+        placement::trainPlacement(cell_features, pin_features, edge_list, config);
+    const double final_overlap =
+        placement::calculateOverlapMetrics(result.final_cell_features)
+            .total_overlap_area;
+
+    expect(final_overlap < initial_overlap, "training reduces overlap area");
+    expect(
+        torch::allclose(result.initial_cell_features, cell_features),
+        "training preserves initial features");
+    expect(!result.stopped_early, "overlap-only training no early stop");
+}
+
+void trainingReducesWirelengthLoss() {
+    const auto float_options = torch::TensorOptions().dtype(torch::kFloat32);
+    const auto long_options = torch::TensorOptions().dtype(torch::kInt64);
+
+    const auto cell_features = torch::tensor(
+        {
+            {1.0F, 1.0F, 0.0F, 0.0F, 1.0F, 1.0F},
+            {1.0F, 1.0F, 10.0F, 0.0F, 1.0F, 1.0F},
+        },
+        float_options);
+    const auto pin_features = torch::tensor(
+        {
+            {0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
+            {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
+        },
+        float_options);
+    const auto edge_list = torch::tensor({{0LL, 1LL}}, long_options);
+
+    placement::TrainingConfig config;
+    config.num_epochs = 20;
+    config.lr = 0.1;
+    config.lambda_wirelength = 1.0;
+    config.lambda_overlap = 0.0;
+    config.scheduler_name = "none";
+    config.early_stop_enabled = false;
+    config.verbose = false;
+
+    const double initial_wl =
+        placement::wirelengthAttractionLoss(cell_features, pin_features, edge_list)
+            .item<double>();
+    const placement::TrainingResult result =
+        placement::trainPlacement(cell_features, pin_features, edge_list, config);
+    const double final_wl = placement::wirelengthAttractionLoss(
+                                result.final_cell_features,
+                                pin_features,
+                                edge_list)
+                                .item<double>();
+
+    expect(final_wl < initial_wl, "training reduces wirelength");
+}
+
+void trainingReportsEarlyStopMetadata() {
+    const auto float_options = torch::TensorOptions().dtype(torch::kFloat32);
+    const auto long_options = torch::TensorOptions().dtype(torch::kInt64);
+
+    const auto cell_features = torch::tensor(
+        {
+            {1.0F, 1.0F, 0.0F, 0.0F, 1.0F, 1.0F},
+            {1.0F, 1.0F, 4.0F, 0.0F, 1.0F, 1.0F},
+        },
+        float_options);
+    const auto pin_features = torch::zeros({0, 7}, float_options);
+    const auto edge_list = torch::zeros({0, 2}, long_options);
+
+    placement::TrainingConfig config;
+    config.num_epochs = 5;
+    config.lr = 0.1;
+    config.lambda_wirelength = 0.0;
+    config.lambda_overlap = 1.0;
+    config.scheduler_name = "none";
+    config.early_stop_enabled = true;
+    config.early_stop_zero_overlap_patience = 1;
+    config.verbose = false;
+
+    const placement::TrainingResult result =
+        placement::trainPlacement(cell_features, pin_features, edge_list, config);
+
+    expect(result.stopped_early, "training reports early stop");
+    expect(
+        result.stop_reason == "zero_overlap_plateau",
+        "training early stop reason");
+    expect(result.best_epoch == 0, "training best epoch");
+}
+
 }  // namespace
 
 int main() {
@@ -237,6 +383,10 @@ int main() {
         deterministicLossesMatchPythonReference();
         lossEdgeCasesStayFinite();
         lossesBackpropagateThroughCellPositions();
+        trainingWithNoEpochsReturnsInitialPlacement();
+        trainingReducesOverlapLoss();
+        trainingReducesWirelengthLoss();
+        trainingReportsEarlyStopMetadata();
     } catch (const std::exception& error) {
         std::cerr << "placement_unit_tests failed: " << error.what() << '\n';
         return 1;
