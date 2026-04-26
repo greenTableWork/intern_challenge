@@ -12,6 +12,9 @@ loss_tracking/*
 **/__pycache__/**
 temp.txt
 
+# Plan files
+*[Pp][Ll][Aa][Nn]*.md
+
 # C++ build and vcpkg manifest artifacts
 cpp/build/
 cpp/build-coverage/
