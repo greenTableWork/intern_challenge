@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+void visualizationWritesSvgWithExpectedContent();
+
 namespace {
 
 void expect(bool condition, const std::string& message) {
@@ -532,6 +534,7 @@ int main() {
         benchmarkCasePopulatesMetricsAndUsesSeed();
         benchmarkSummaryAggregatesOrderedResults();
         emptyBenchmarkSummaryIsZeroed();
+        visualizationWritesSvgWithExpectedContent();
     } catch (const std::exception& error) {
         std::cerr << "placement_unit_tests failed: " << error.what() << '\n';
         return 1;

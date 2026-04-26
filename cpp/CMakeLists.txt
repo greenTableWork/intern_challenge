@@ -100,6 +100,7 @@ add_library(
   losses.cpp
   metrics.cpp
   training.cpp
+  visualization.cpp
 )
 target_include_directories(placement_core PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include")
 target_link_libraries(placement_core PUBLIC "${TORCH_LIBRARIES}")
@@ -112,7 +113,11 @@ target_compile_features(placement PRIVATE cxx_std_20)
 enable_placement_coverage(placement)
 
 if(BUILD_TESTING)
-  add_executable(placement_unit_tests tests/metrics_tests.cpp)
+  add_executable(
+    placement_unit_tests
+    tests/metrics_tests.cpp
+    tests/visualization_tests.cpp
+  )
   target_link_libraries(placement_unit_tests PRIVATE placement_core)
   target_compile_features(placement_unit_tests PRIVATE cxx_std_20)
   enable_placement_coverage(placement_unit_tests)
