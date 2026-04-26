@@ -61,6 +61,9 @@ This file is the shared recovery plan for porting the Python placement flow from
 After each implementation step, stop and ask for explicit permission before
 editing code for the next step.
 
+Use branch/worktree coordination for delegated work, and integrate branches into
+`main` with fast-forward-only merges.
+
 Permission checkpoints:
 
 1. Write or update this plan file.
