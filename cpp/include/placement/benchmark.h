@@ -12,4 +12,10 @@ BenchmarkResult runBenchmarkCase(
     const BenchmarkCase& test_case,
     const TrainingConfig& config = {});
 
+BenchmarkSummary runBenchmarkCases(
+    const std::vector<BenchmarkCase>& test_cases,
+    const TrainingConfig& config = {});
+
+BenchmarkSummary runActiveBenchmarkCases(const TrainingConfig& config = {});
+
 }  // namespace placement

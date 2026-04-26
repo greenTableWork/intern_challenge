@@ -32,6 +32,7 @@ if(NOT profdata_result EQUAL 0)
 endif()
 
 set(covered_sources
+  "${SOURCE_DIR}/benchmark.cpp"
   "${SOURCE_DIR}/generation.cpp"
   "${SOURCE_DIR}/losses.cpp"
   "${SOURCE_DIR}/metrics.cpp"

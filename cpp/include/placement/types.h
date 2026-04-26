@@ -34,6 +34,7 @@ struct PlacementProblem {
 };
 
 struct TrainingConfig {
+    c10::DeviceType device = torch::kCPU;
     int num_epochs = 1000;
     double lr = 0.1;
     double lambda_wirelength = 3.0;
@@ -94,10 +95,21 @@ struct BenchmarkResult {
     int64_t total_cells = 0;
     int64_t num_nets = 0;
     int seed = 0;
+    c10::DeviceType device = torch::kCPU;
     double elapsed_seconds = 0.0;
     int num_cells_with_overlaps = 0;
     double overlap_ratio = 0.0;
     double normalized_wl = 0.0;
+    bool passed = false;
+};
+
+struct BenchmarkSummary {
+    std::vector<BenchmarkResult> results;
+    double average_overlap = 0.0;
+    double average_wirelength = 0.0;
+    double total_elapsed_seconds = 0.0;
+    int passed_count = 0;
+    int failed_count = 0;
 };
 
 }  // namespace placement

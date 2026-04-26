@@ -1,3 +1,4 @@
+#include "placement/benchmark.h"
 #include "placement/generation.h"
 #include "placement/losses.h"
 #include "placement/metrics.h"
@@ -9,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -28,6 +30,16 @@ void expectNear(
             message + ": actual=" + std::to_string(actual) +
             " expected=" + std::to_string(expected));
     }
+}
+
+placement::TrainingConfig fastBenchmarkConfig() {
+    placement::TrainingConfig config;
+    config.device = torch::kCPU;
+    config.num_epochs = 0;
+    config.scheduler_name = "none";
+    config.early_stop_enabled = false;
+    config.verbose = false;
+    return config;
 }
 
 void deterministicMetricsMatchPythonReference() {
@@ -374,6 +386,135 @@ void trainingReportsEarlyStopMetadata() {
     expect(result.best_epoch == 0, "training best epoch");
 }
 
+void activeBenchmarkCasesMatchPythonReference() {
+    const std::vector<placement::BenchmarkCase> expected = {
+        {1, 2, 20, 1001},
+        {2, 3, 25, 1002},
+        {3, 2, 30, 1003},
+        {4, 3, 50, 1004},
+        {5, 4, 75, 1005},
+        {6, 5, 100, 1006},
+        {7, 5, 150, 1007},
+        {8, 7, 150, 1008},
+        {9, 8, 200, 1009},
+        {10, 10, 2000, 1010},
+    };
+
+    const std::vector<placement::BenchmarkCase>& actual =
+        placement::activeBenchmarkCases();
+    expect(actual.size() == expected.size(), "active benchmark case count");
+
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        expect(actual[i].test_id == expected[i].test_id, "benchmark test id");
+        expect(actual[i].num_macros == expected[i].num_macros, "benchmark macros");
+        expect(
+            actual[i].num_std_cells == expected[i].num_std_cells,
+            "benchmark standard cells");
+        expect(actual[i].seed == expected[i].seed, "benchmark seed");
+    }
+}
+
+void benchmarkCasePopulatesMetricsAndUsesSeed() {
+    placement::TrainingConfig config = fastBenchmarkConfig();
+
+    const placement::BenchmarkCase test_case{42, 1, 4, 4242};
+    const placement::BenchmarkResult first =
+        placement::runBenchmarkCase(test_case, config);
+    const placement::BenchmarkResult second =
+        placement::runBenchmarkCase(test_case, config);
+
+    expect(first.test_id == test_case.test_id, "benchmark result test id");
+    expect(first.num_macros == test_case.num_macros, "benchmark result macros");
+    expect(
+        first.num_std_cells == test_case.num_std_cells,
+        "benchmark result standard cells");
+    expect(first.seed == test_case.seed, "benchmark result seed");
+    expect(first.device == config.device, "benchmark result device");
+    expect(first.total_cells == 5, "benchmark result total cells");
+    expect(first.num_nets >= 0, "benchmark result net count");
+    expect(first.elapsed_seconds >= 0.0, "benchmark result elapsed time");
+    expect(first.num_cells_with_overlaps >= 0, "benchmark overlap cell lower bound");
+    expect(
+        first.num_cells_with_overlaps <= first.total_cells,
+        "benchmark overlap cell upper bound");
+    expect(
+        first.overlap_ratio >= 0.0 && first.overlap_ratio <= 1.0,
+        "benchmark overlap ratio range");
+    expect(std::isfinite(first.normalized_wl), "benchmark finite wirelength");
+    expect(first.normalized_wl >= 0.0, "benchmark nonnegative wirelength");
+    expect(
+        first.passed == (first.num_cells_with_overlaps == 0),
+        "benchmark pass flag");
+
+    expect(first.num_nets == second.num_nets, "benchmark seeded net count");
+    expectNear(
+        first.overlap_ratio,
+        second.overlap_ratio,
+        1e-12,
+        "benchmark seeded overlap ratio");
+    expectNear(
+        first.normalized_wl,
+        second.normalized_wl,
+        1e-12,
+        "benchmark seeded normalized wirelength");
+}
+
+void benchmarkSummaryAggregatesOrderedResults() {
+    placement::TrainingConfig config = fastBenchmarkConfig();
+
+    const std::vector<placement::BenchmarkCase> cases = {
+        {101, 0, 2, 1101},
+        {102, 0, 3, 1102},
+    };
+
+    const placement::BenchmarkSummary summary =
+        placement::runBenchmarkCases(cases, config);
+
+    expect(summary.results.size() == cases.size(), "benchmark summary result count");
+    expect(summary.results[0].test_id == 101, "benchmark summary preserves first id");
+    expect(summary.results[1].test_id == 102, "benchmark summary preserves second id");
+
+    const double expected_average_overlap =
+        (summary.results[0].overlap_ratio + summary.results[1].overlap_ratio) /
+        2.0;
+    const double expected_average_wirelength =
+        (summary.results[0].normalized_wl + summary.results[1].normalized_wl) /
+        2.0;
+    expectNear(
+        summary.average_overlap,
+        expected_average_overlap,
+        1e-12,
+        "benchmark average overlap");
+    expectNear(
+        summary.average_wirelength,
+        expected_average_wirelength,
+        1e-12,
+        "benchmark average wirelength");
+
+    const int expected_passed =
+        (summary.results[0].passed ? 1 : 0) + (summary.results[1].passed ? 1 : 0);
+    expect(summary.passed_count == expected_passed, "benchmark passed count");
+    expect(
+        summary.failed_count ==
+            static_cast<int>(summary.results.size()) - expected_passed,
+        "benchmark failed count");
+    expect(
+        std::isfinite(summary.total_elapsed_seconds) &&
+            summary.total_elapsed_seconds >= 0.0,
+        "benchmark finite total elapsed time");
+}
+
+void emptyBenchmarkSummaryIsZeroed() {
+    const placement::BenchmarkSummary summary = placement::runBenchmarkCases({});
+
+    expect(summary.results.empty(), "empty benchmark result list");
+    expectNear(summary.average_overlap, 0.0, 1e-12, "empty average overlap");
+    expectNear(summary.average_wirelength, 0.0, 1e-12, "empty average wirelength");
+    expectNear(summary.total_elapsed_seconds, 0.0, 1e-12, "empty elapsed time");
+    expect(summary.passed_count == 0, "empty passed count");
+    expect(summary.failed_count == 0, "empty failed count");
+}
+
 }  // namespace
 
 int main() {
@@ -387,6 +528,10 @@ int main() {
         trainingReducesOverlapLoss();
         trainingReducesWirelengthLoss();
         trainingReportsEarlyStopMetadata();
+        activeBenchmarkCasesMatchPythonReference();
+        benchmarkCasePopulatesMetricsAndUsesSeed();
+        benchmarkSummaryAggregatesOrderedResults();
+        emptyBenchmarkSummaryIsZeroed();
     } catch (const std::exception& error) {
         std::cerr << "placement_unit_tests failed: " << error.what() << '\n';
         return 1;
