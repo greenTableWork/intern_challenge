@@ -78,7 +78,7 @@ if(NOT Python3_EXECUTABLE)
   endif()
 endif()
 
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 execute_process(
   COMMAND "${Python3_EXECUTABLE}" -c "import torch; print(torch.utils.cmake_prefix_path)"
   OUTPUT_VARIABLE TORCH_CMAKE_PREFIX_PATH
@@ -92,6 +92,7 @@ list(PREPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX_PATH}")
 
 find_package(Torch CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
+find_path(MATPLOTLIB_CPP_INCLUDE_DIRS "matplotlibcpp.h" REQUIRED)
 
 add_library(
   placement_core
@@ -103,7 +104,8 @@ add_library(
   visualization.cpp
 )
 target_include_directories(placement_core PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include")
-target_link_libraries(placement_core PUBLIC "${TORCH_LIBRARIES}")
+target_include_directories(placement_core PRIVATE "${MATPLOTLIB_CPP_INCLUDE_DIRS}")
+target_link_libraries(placement_core PUBLIC "${TORCH_LIBRARIES}" Python3::Python)
 target_compile_features(placement_core PUBLIC cxx_std_20)
 enable_placement_coverage(placement_core)
 

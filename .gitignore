@@ -3,6 +3,8 @@
 *.jpeg
 *.gif
 *.bmp
+*.csv
+
 
 */.ipynb_checkpoints/*
 profile/*

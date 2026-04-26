@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-void visualizationWritesSvgWithExpectedContent();
+void visualizationWritesPngWithExpectedContent();
 
 namespace {
 
@@ -534,7 +534,7 @@ int main() {
         benchmarkCasePopulatesMetricsAndUsesSeed();
         benchmarkSummaryAggregatesOrderedResults();
         emptyBenchmarkSummaryIsZeroed();
-        visualizationWritesSvgWithExpectedContent();
+        visualizationWritesPngWithExpectedContent();
     } catch (const std::exception& error) {
         std::cerr << "placement_unit_tests failed: " << error.what() << '\n';
         return 1;

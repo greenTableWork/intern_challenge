@@ -34,7 +34,7 @@ struct CliOptions {
     int num_std_cells = 10;
     int seed = 42;
     bool write_output_files = false;
-    std::string output_dir = ".";
+    std::string output_dir = "..";
 };
 
 std::string deviceTypeName(c10::DeviceType device) {
@@ -492,7 +492,7 @@ void writeSinglePlacementArtifacts(
     const placement::TrainingResult& training_result,
     bool passed) {
     const std::filesystem::path visualization_path =
-        outputFilePath(options, "placement_result.svg");
+        outputFilePath(options, "placement_result.png");
     placement::plotPlacement(
         training_result.initial_cell_features,
         training_result.final_cell_features,

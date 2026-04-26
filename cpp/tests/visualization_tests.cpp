@@ -17,7 +17,7 @@ void expect(bool condition, const std::string& message) {
 }
 
 std::string readFile(const std::filesystem::path& path) {
-    std::ifstream input(path);
+    std::ifstream input(path, std::ios::binary);
     if (!input) {
         throw std::runtime_error("unable to read visualization output");
     }
@@ -29,7 +29,7 @@ std::string readFile(const std::filesystem::path& path) {
 
 }  // namespace
 
-void visualizationWritesSvgWithExpectedContent() {
+void visualizationWritesPngWithExpectedContent() {
     const auto float_options = torch::TensorOptions().dtype(torch::kFloat32);
 
     const auto initial_cell_features = torch::tensor(
@@ -47,7 +47,7 @@ void visualizationWritesSvgWithExpectedContent() {
 
     const std::filesystem::path output_path =
         std::filesystem::temp_directory_path() / "placement_cpp_visualization_tests" /
-        "nested" / "tiny_placement.svg";
+        "nested" / "tiny_placement.png";
     std::filesystem::remove(output_path);
 
     placement::plotPlacement(initial_cell_features, final_cell_features, output_path);
@@ -56,20 +56,8 @@ void visualizationWritesSvgWithExpectedContent() {
     expect(std::filesystem::file_size(output_path) > 0, "visualization output is nonempty");
 
     const std::string content = readFile(output_path);
+    expect(content.size() > 8, "visualization output has png header bytes");
     expect(
-        content.find("Initial Placement") != std::string::npos,
-        "visualization contains initial label");
-    expect(
-        content.find("Final Placement") != std::string::npos,
-        "visualization contains final label");
-    expect(content.find("<rect") != std::string::npos, "visualization contains rectangles");
-    expect(
-        content.find("Overlaps: 1") != std::string::npos,
-        "visualization contains initial overlap count");
-    expect(
-        content.find("Overlaps: 0") != std::string::npos,
-        "visualization contains final overlap count");
-    expect(
-        content.find("Total Overlap Area: 2.00") != std::string::npos,
-        "visualization contains formatted overlap area");
+        static_cast<unsigned char>(content[0]) == 0x89 && content.substr(1, 3) == "PNG",
+        "visualization output is a png");
 }
