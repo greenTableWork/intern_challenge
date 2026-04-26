@@ -3,6 +3,7 @@
 #include "placement/metrics.h"
 #include "placement/training.h"
 #include "placement/types.h"
+#include "placement/visualization.h"
 
 #include <CLI/CLI.hpp>
 #include <torch/cuda.h>
@@ -365,6 +366,7 @@ std::vector<std::string> singlePlacementHeader() {
         "early_stop_min_delta",
         "early_stop_overlap_threshold",
         "early_stop_zero_overlap_patience",
+        "visualization_path",
     };
 }
 
@@ -375,7 +377,8 @@ std::vector<std::string> singlePlacementRow(
     const placement::OverlapMetrics& final_metrics,
     const placement::Metrics& normalized_metrics,
     const placement::TrainingResult& training_result,
-    bool passed) {
+    bool passed,
+    const std::filesystem::path& visualization_path) {
     return {
         "single",
         std::to_string(selected_case.test_id),
@@ -412,6 +415,7 @@ std::vector<std::string> singlePlacementRow(
         formatDouble(config.early_stop_min_delta),
         formatDouble(config.early_stop_overlap_threshold),
         std::to_string(config.early_stop_zero_overlap_patience),
+        visualization_path.string(),
     };
 }
 
@@ -422,7 +426,8 @@ std::vector<JsonField> singlePlacementJsonFields(
     const placement::OverlapMetrics& final_metrics,
     const placement::Metrics& normalized_metrics,
     const placement::TrainingResult& training_result,
-    bool passed) {
+    bool passed,
+    const std::filesystem::path& visualization_path) {
     return {
         {"run_type", jsonString("single")},
         {"test_case_id", std::to_string(selected_case.test_id)},
@@ -473,6 +478,7 @@ std::vector<JsonField> singlePlacementJsonFields(
          jsonDouble(config.early_stop_overlap_threshold)},
         {"early_stop_zero_overlap_patience",
          std::to_string(config.early_stop_zero_overlap_patience)},
+        {"visualization_path", jsonString(visualization_path.string())},
     };
 }
 
@@ -485,6 +491,13 @@ void writeSinglePlacementArtifacts(
     const placement::Metrics& normalized_metrics,
     const placement::TrainingResult& training_result,
     bool passed) {
+    const std::filesystem::path visualization_path =
+        outputFilePath(options, "placement_result.svg");
+    placement::plotPlacement(
+        training_result.initial_cell_features,
+        training_result.final_cell_features,
+        visualization_path);
+
     writeCsvFile(
         outputFilePath(options, "placement_result_summary.csv"),
         singlePlacementHeader(),
@@ -495,7 +508,8 @@ void writeSinglePlacementArtifacts(
             final_metrics,
             normalized_metrics,
             training_result,
-            passed)});
+            passed,
+            visualization_path)});
 
     std::ostringstream json;
     appendJsonObject(
@@ -507,7 +521,8 @@ void writeSinglePlacementArtifacts(
             final_metrics,
             normalized_metrics,
             training_result,
-            passed),
+            passed,
+            visualization_path),
         0);
     json << "\n";
     writeTextFile(outputFilePath(options, "placement_result_summary.json"), json.str());

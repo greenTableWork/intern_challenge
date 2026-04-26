@@ -37,6 +37,7 @@ set(covered_sources
   "${SOURCE_DIR}/losses.cpp"
   "${SOURCE_DIR}/metrics.cpp"
   "${SOURCE_DIR}/training.cpp"
+  "${SOURCE_DIR}/visualization.cpp"
 )
 
 execute_process(
