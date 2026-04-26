@@ -4,9 +4,57 @@ project(placement_cpp LANGUAGES CXX)
 
 include(CTest)
 
+option(PLACEMENT_ENABLE_COVERAGE "Enable LLVM source-based coverage for unit tests" OFF)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(PLACEMENT_ENABLE_COVERAGE)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "PLACEMENT_ENABLE_COVERAGE requires a Clang-compatible compiler")
+  endif()
+
+  find_program(LLVM_PROFDATA_EXECUTABLE llvm-profdata)
+  if(NOT LLVM_PROFDATA_EXECUTABLE)
+    execute_process(
+      COMMAND xcrun -f llvm-profdata
+      OUTPUT_VARIABLE LLVM_PROFDATA_EXECUTABLE
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE LLVM_PROFDATA_RESULT
+    )
+    if(NOT LLVM_PROFDATA_RESULT EQUAL 0)
+      message(FATAL_ERROR "Unable to find llvm-profdata")
+    endif()
+  endif()
+
+  find_program(LLVM_COV_EXECUTABLE llvm-cov)
+  if(NOT LLVM_COV_EXECUTABLE)
+    execute_process(
+      COMMAND xcrun -f llvm-cov
+      OUTPUT_VARIABLE LLVM_COV_EXECUTABLE
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE LLVM_COV_RESULT
+    )
+    if(NOT LLVM_COV_RESULT EQUAL 0)
+      message(FATAL_ERROR "Unable to find llvm-cov")
+    endif()
+  endif()
+endif()
+
+function(enable_placement_coverage target_name)
+  if(PLACEMENT_ENABLE_COVERAGE)
+    target_compile_options(
+      ${target_name}
+      PRIVATE
+        -fprofile-instr-generate
+        -fcoverage-mapping
+        -O0
+        -g
+    )
+    target_link_options(${target_name} PRIVATE -fprofile-instr-generate)
+  endif()
+endfunction()
 
 # LibTorch is provided by the active Python environment rather than vcpkg.
 # Prefer the repo-local virtualenv when present, then ask Python where the
@@ -14,6 +62,20 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(_repo_venv_python "${CMAKE_CURRENT_LIST_DIR}/../.venv/bin/python")
 if(NOT Python3_EXECUTABLE AND EXISTS "${_repo_venv_python}")
   set(Python3_EXECUTABLE "${_repo_venv_python}" CACHE FILEPATH "Python interpreter")
+endif()
+if(NOT Python3_EXECUTABLE)
+  find_program(_path_python3 NAMES python3 python)
+  if(_path_python3)
+    execute_process(
+      COMMAND "${_path_python3}" -c "import torch"
+      RESULT_VARIABLE _path_python3_torch_result
+      OUTPUT_QUIET
+      ERROR_QUIET
+    )
+    if(_path_python3_torch_result EQUAL 0)
+      set(Python3_EXECUTABLE "${_path_python3}" CACHE FILEPATH "Python interpreter")
+    endif()
+  endif()
 endif()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -42,16 +104,35 @@ add_library(
 target_include_directories(placement_core PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include")
 target_link_libraries(placement_core PUBLIC "${TORCH_LIBRARIES}")
 target_compile_features(placement_core PUBLIC cxx_std_20)
+enable_placement_coverage(placement_core)
 
 add_executable(placement_smoke main.cpp)
 target_link_libraries(placement_smoke PRIVATE placement_core CLI11::CLI11)
 target_compile_features(placement_smoke PRIVATE cxx_std_20)
+enable_placement_coverage(placement_smoke)
 
 if(BUILD_TESTING)
   add_executable(placement_unit_tests tests/metrics_tests.cpp)
   target_link_libraries(placement_unit_tests PRIVATE placement_core)
   target_compile_features(placement_unit_tests PRIVATE cxx_std_20)
+  enable_placement_coverage(placement_unit_tests)
   add_test(NAME placement_unit_tests COMMAND placement_unit_tests)
+
+  if(PLACEMENT_ENABLE_COVERAGE)
+    add_custom_target(
+      placement_coverage
+      COMMAND
+        "${CMAKE_COMMAND}"
+        -DTEST_EXECUTABLE=$<TARGET_FILE:placement_unit_tests>
+        -DLLVM_PROFDATA="${LLVM_PROFDATA_EXECUTABLE}"
+        -DLLVM_COV="${LLVM_COV_EXECUTABLE}"
+        -DSOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        -DCOVERAGE_DIR="${CMAKE_BINARY_DIR}/coverage"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunCoverage.cmake"
+      DEPENDS placement_unit_tests
+      USES_TERMINAL
+    )
+  endif()
 endif()
 
 if(MSVC)

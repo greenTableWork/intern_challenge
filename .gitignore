@@ -14,5 +14,6 @@ temp.txt
 
 # C++ build and vcpkg manifest artifacts
 cpp/build/
+cpp/build-coverage/
 cpp/vcpkg_installed/
 cpp/.vcpkg-root
