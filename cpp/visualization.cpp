@@ -23,6 +23,10 @@ namespace {
 using namespace torch::indexing;
 namespace plt = matplotlibcpp;
 
+#ifndef PLACEMENT_PYTHON_SITE_PACKAGES
+#define PLACEMENT_PYTHON_SITE_PACKAGES ""
+#endif
+
 int64_t featureIndex(placement::CellFeatureIdx idx) {
     return static_cast<int64_t>(idx);
 }
@@ -138,24 +142,120 @@ void drawCell(const CellRect& rect) {
     }
 }
 
+void setEqualAspect() {
+    PyObject* axes = PyObject_CallObject(
+        matplotlibcpp::detail::_interpreter::get().s_python_function_gca,
+        matplotlibcpp::detail::_interpreter::get().s_python_empty_tuple);
+    if (axes == nullptr) {
+        throw std::runtime_error("Call to gca() failed.");
+    }
+
+    PyObject* result = PyObject_CallMethod(
+        axes,
+        const_cast<char*>("set_aspect"),
+        "ss",
+        "equal",
+        "box");
+    Py_DECREF(axes);
+    if (result == nullptr) {
+        throw std::runtime_error("Call to set_aspect() failed.");
+    }
+    Py_DECREF(result);
+}
+
 void drawPanel(const PanelData& panel, const std::string& title) {
     for (const CellRect& rect : panel.rects) {
         drawCell(rect);
     }
 
     plt::title(formatTitle(title, panel.metrics));
-    plt::axis("equal");
+    setEqualAspect();
     plt::grid(true);
     plt::xlim(panel.min_x, panel.max_x);
     plt::ylim(panel.min_y, panel.max_y);
 }
 
-void configureHeadlessBackend() {
-#ifndef _WIN32
-    std::filesystem::create_directories("/tmp/matplotlib-cpp");
-    setenv("MPLBACKEND", "Agg", 0);
-    setenv("MPLCONFIGDIR", "/tmp/matplotlib-cpp", 0);
+void selectSubplot(long plot_number) {
+    PyObject* args = PyTuple_New(1);
+    PyTuple_SetItem(args, 0, PyLong_FromLong(plot_number));
+
+    PyObject* result = PyObject_CallObject(
+        matplotlibcpp::detail::_interpreter::get().s_python_function_subplot,
+        args);
+    Py_DECREF(args);
+    if (result == nullptr) {
+        throw std::runtime_error("Call to subplot() failed.");
+    }
+    Py_DECREF(result);
+}
+
+void setEnvVar(const std::string& name, const std::string& value, bool overwrite) {
+#ifdef _WIN32
+    if (!overwrite && std::getenv(name.c_str()) != nullptr) {
+        return;
+    }
+    _putenv_s(name.c_str(), value.c_str());
+#else
+    setenv(name.c_str(), value.c_str(), overwrite ? 1 : 0);
 #endif
+}
+
+void prependEnvPath(const std::string& name, const std::string& path) {
+    if (path.empty()) {
+        return;
+    }
+
+    const char* current_value = std::getenv(name.c_str());
+    if (current_value == nullptr || std::string(current_value).empty()) {
+        setEnvVar(name, path, true);
+        return;
+    }
+
+    const std::string current(current_value);
+    if (current == path) {
+        return;
+    }
+
+#ifdef _WIN32
+    constexpr char kPathSeparator = ';';
+#else
+    constexpr char kPathSeparator = ':';
+#endif
+    const std::string path_with_separator = path + kPathSeparator;
+    const std::string separator_with_path =
+        std::string(1, kPathSeparator) + path + kPathSeparator;
+    const bool ends_with_path =
+        current.size() > path.size() &&
+        current.compare(current.size() - path.size(), path.size(), path) == 0 &&
+        current[current.size() - path.size() - 1] == kPathSeparator;
+    if (current.rfind(path_with_separator, 0) == 0 ||
+        current.find(separator_with_path) != std::string::npos || ends_with_path) {
+        return;
+    }
+
+    setEnvVar(name, path + kPathSeparator + current, true);
+}
+
+void configureHeadlessBackend() {
+    prependEnvPath("PYTHONPATH", PLACEMENT_PYTHON_SITE_PACKAGES);
+
+    const std::filesystem::path config_dir =
+        std::filesystem::temp_directory_path() / "matplotlib-cpp";
+    const std::filesystem::path cache_dir =
+        std::filesystem::temp_directory_path() / "matplotlib-cpp-cache";
+    std::filesystem::create_directories(config_dir);
+    std::filesystem::create_directories(cache_dir);
+
+    setEnvVar("MPLBACKEND", "Agg", true);
+    setEnvVar("MPLCONFIGDIR", config_dir.string(), true);
+    setEnvVar("XDG_CACHE_HOME", cache_dir.string(), false);
+}
+
+void closePlotIgnoringErrors() {
+    try {
+        plt::close();
+    } catch (...) {
+    }
 }
 
 }  // namespace
@@ -176,21 +276,30 @@ void plotPlacement(
         std::filesystem::create_directories(parent);
     }
 
-    plt::figure_size(1600, 800);
     try {
-        plt::subplot2grid(1, 2, 0, 0);
+        plt::figure_size(1600, 800);
+        selectSubplot(121);
         drawPanel(initial_panel, "Initial Placement");
-        plt::subplot2grid(1, 2, 0, 1);
+        selectSubplot(122);
         drawPanel(final_panel, "Final Placement");
         plt::tight_layout();
         plt::save(output_path.string());
         plt::close();
+    } catch (const std::exception& error) {
+        if (PyErr_Occurred() != nullptr) {
+            PyErr_Print();
+        }
+        closePlotIgnoringErrors();
+        throw std::runtime_error(
+            "Unable to render placement image to " + output_path.string() +
+            ": " + error.what());
     } catch (...) {
         if (PyErr_Occurred() != nullptr) {
             PyErr_Print();
         }
-        plt::close();
-        throw;
+        closePlotIgnoringErrors();
+        throw std::runtime_error(
+            "Unable to render placement image to " + output_path.string());
     }
 }
 

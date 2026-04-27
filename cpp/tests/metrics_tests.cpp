@@ -504,6 +504,28 @@ void benchmarkSummaryAggregatesOrderedResults() {
         std::isfinite(summary.total_elapsed_seconds) &&
             summary.total_elapsed_seconds >= 0.0,
         "benchmark finite total elapsed time");
+
+    const placement::BenchmarkSummary parallel_summary =
+        placement::runBenchmarkCases(cases, config, 2);
+    expect(
+        parallel_summary.results.size() == cases.size(),
+        "parallel benchmark summary result count");
+    expect(
+        parallel_summary.results[0].test_id == summary.results[0].test_id,
+        "parallel benchmark preserves first id");
+    expect(
+        parallel_summary.results[1].test_id == summary.results[1].test_id,
+        "parallel benchmark preserves second id");
+    expectNear(
+        parallel_summary.average_overlap,
+        summary.average_overlap,
+        1e-12,
+        "parallel benchmark average overlap");
+    expectNear(
+        parallel_summary.average_wirelength,
+        summary.average_wirelength,
+        1e-12,
+        "parallel benchmark average wirelength");
 }
 
 void emptyBenchmarkSummaryIsZeroed() {

@@ -137,7 +137,7 @@ void configureCli(
     app.add_option(
         "--workers",
         options.workers,
-        "Accepted for test.py CLI parity; C++ execution is currently serial.");
+        "Number of worker threads for benchmark cases.");
     app.add_option(
         "--num-epochs",
         config.num_epochs,
@@ -245,10 +245,14 @@ int runTestSuite(
     printTrainingConfig(config, options.workers);
     std::cout << "\nLoss history tracking disabled.\n\n";
     printCaseList();
-    std::cout << "Running serially\n\n";
+    if (options.workers == 1) {
+        std::cout << "Running serially\n\n";
+    } else {
+        std::cout << "Running with " << options.workers << " workers\n\n";
+    }
 
     const placement::BenchmarkSummary summary =
-        placement::runActiveBenchmarkCases(config);
+        placement::runActiveBenchmarkCases(config, options.workers);
     for (const placement::BenchmarkResult& result : summary.results) {
         printBenchmarkResult(result);
     }

@@ -88,6 +88,24 @@ execute_process(
 if(NOT TORCH_CMAKE_PREFIX_RESULT EQUAL 0)
   message(FATAL_ERROR "Unable to import torch from ${Python3_EXECUTABLE}. Install torch in .venv or set Python3_EXECUTABLE.")
 endif()
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"
+  OUTPUT_VARIABLE PYTHON_SITE_PACKAGES
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  RESULT_VARIABLE PYTHON_SITE_PACKAGES_RESULT
+)
+if(NOT PYTHON_SITE_PACKAGES_RESULT EQUAL 0 OR PYTHON_SITE_PACKAGES STREQUAL "")
+  message(FATAL_ERROR "Unable to detect Python site-packages from ${Python3_EXECUTABLE}.")
+endif()
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" -c "import matplotlib"
+  RESULT_VARIABLE MATPLOTLIB_IMPORT_RESULT
+  OUTPUT_QUIET
+  ERROR_QUIET
+)
+if(NOT MATPLOTLIB_IMPORT_RESULT EQUAL 0)
+  message(FATAL_ERROR "Unable to import matplotlib from ${Python3_EXECUTABLE}. Install matplotlib in the selected Python environment.")
+endif()
 list(PREPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX_PATH}")
 
 find_package(Torch CONFIG REQUIRED)
@@ -104,7 +122,12 @@ add_library(
   visualization.cpp
 )
 target_include_directories(placement_core PUBLIC "${CMAKE_CURRENT_LIST_DIR}/include")
-target_include_directories(placement_core PRIVATE "${MATPLOTLIB_CPP_INCLUDE_DIRS}")
+target_include_directories(placement_core SYSTEM PRIVATE "${MATPLOTLIB_CPP_INCLUDE_DIRS}")
+target_compile_definitions(
+  placement_core
+  PRIVATE
+    PLACEMENT_PYTHON_SITE_PACKAGES="${PYTHON_SITE_PACKAGES}"
+)
 target_link_libraries(placement_core PUBLIC "${TORCH_LIBRARIES}" Python3::Python)
 target_compile_features(placement_core PUBLIC cxx_std_20)
 enable_placement_coverage(placement_core)
