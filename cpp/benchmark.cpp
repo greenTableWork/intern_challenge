@@ -80,6 +80,10 @@ BenchmarkResult runBenchmarkCaseImpl(
     result.overlap_ratio = metrics.overlap_ratio;
     result.normalized_wl = metrics.normalized_wl;
     result.passed = result.num_cells_with_overlaps == 0;
+    result.stopped_early = training_result.stopped_early;
+    result.stop_reason = training_result.stop_reason;
+    result.best_epoch = training_result.best_epoch;
+    result.epochs_completed = training_result.epochs_completed;
     return result;
 }
 

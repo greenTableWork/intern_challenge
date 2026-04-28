@@ -289,6 +289,10 @@ std::vector<std::string> benchmarkResultHeader() {
         "overlap_ratio",
         "normalized_wl",
         "passed",
+        "stopped_early",
+        "stop_reason",
+        "best_epoch",
+        "epochs_completed",
     };
 }
 
@@ -307,6 +311,10 @@ std::vector<std::string> benchmarkResultRow(
         formatDouble(result.overlap_ratio),
         formatDouble(result.normalized_wl),
         boolText(result.passed),
+        boolText(result.stopped_early),
+        result.stop_reason,
+        std::to_string(result.best_epoch),
+        std::to_string(result.epochs_completed),
     };
 }
 
@@ -326,6 +334,10 @@ std::vector<JsonField> benchmarkResultJsonFields(
         {"overlap_ratio", jsonDouble(result.overlap_ratio)},
         {"normalized_wl", jsonDouble(result.normalized_wl)},
         {"passed", jsonBool(result.passed)},
+        {"stopped_early", jsonBool(result.stopped_early)},
+        {"stop_reason", jsonString(result.stop_reason)},
+        {"best_epoch", std::to_string(result.best_epoch)},
+        {"epochs_completed", std::to_string(result.epochs_completed)},
     };
 }
 
@@ -360,6 +372,7 @@ std::vector<std::string> singlePlacementHeader() {
         "stopped_early",
         "stop_reason",
         "best_epoch",
+        "epochs_completed",
         "num_epochs",
         "early_stop_enabled",
         "early_stop_patience",
@@ -409,6 +422,7 @@ std::vector<std::string> singlePlacementRow(
         boolText(training_result.stopped_early),
         training_result.stop_reason,
         std::to_string(training_result.best_epoch),
+        std::to_string(training_result.epochs_completed),
         std::to_string(config.num_epochs),
         boolText(config.early_stop_enabled),
         std::to_string(config.early_stop_patience),
@@ -470,6 +484,7 @@ std::vector<JsonField> singlePlacementJsonFields(
         {"stopped_early", jsonBool(training_result.stopped_early)},
         {"stop_reason", jsonString(training_result.stop_reason)},
         {"best_epoch", std::to_string(training_result.best_epoch)},
+        {"epochs_completed", std::to_string(training_result.epochs_completed)},
         {"num_epochs", std::to_string(config.num_epochs)},
         {"early_stop_enabled", jsonBool(config.early_stop_enabled)},
         {"early_stop_patience", std::to_string(config.early_stop_patience)},
@@ -644,6 +659,11 @@ void printBenchmarkResult(const placement::BenchmarkResult& result) {
               << "/" << result.total_cells << " cells)\n";
     std::cout << "  Normalized WL: " << std::fixed << std::setprecision(4)
               << result.normalized_wl << "\n";
+    std::cout << "  Epochs Completed: " << result.epochs_completed << "\n";
+    if (result.stopped_early) {
+        std::cout << "  Stopped Early: " << result.stop_reason
+                  << " at best epoch " << result.best_epoch << "\n";
+    }
     std::cout << "  Time: " << std::fixed << std::setprecision(2)
               << result.elapsed_seconds << "s\n";
     std::cout << "  Status: " << status << "\n\n";
@@ -790,6 +810,7 @@ int runSinglePlacement(
               << normalized_metrics.total_cells << " cells)\n";
     std::cout << "Normalized Wirelength: " << std::fixed << std::setprecision(4)
               << normalized_metrics.normalized_wl << "\n";
+    std::cout << "Epochs Completed: " << training_result.epochs_completed << "\n";
     if (training_result.stopped_early) {
         std::cout << "Stopped Early: " << training_result.stop_reason
                   << " at best epoch " << training_result.best_epoch << "\n";

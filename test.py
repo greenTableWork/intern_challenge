@@ -34,9 +34,9 @@ from placement import (
     OUTPUT_DIR,
     calculate_normalized_metrics,
     generate_placement_input,
-    get_best_device,
     initialize_cell_positions,
     plot_placement,
+    resolve_device,
     seed_torch,
     train_placement,
 )
@@ -67,7 +67,7 @@ def run_placement_test(
         # Set seed for reproducibility
         seed_torch(seed)
 
-    device = get_best_device()
+    device = resolve_device(training_config["device"])
 
     # Generate netlist
     cell_features, pin_features, edge_list = generate_placement_input(
@@ -111,6 +111,7 @@ def run_placement_test(
         early_stop_zero_overlap_patience=training_config[
             "early_stop_zero_overlap_patience"
         ],
+        device=device,
     )
     elapsed_time = time.time() - start_time
     loss_history_path = None
@@ -214,6 +215,7 @@ def run_all_tests(args):
         "early_stop_zero_overlap_patience": args.early_stop_zero_overlap_patience,
         "profile_tag": args.profile_tag,
         "torch_profiler_config": build_torch_profiler_config_from_args(args),
+        "device": args.device,
     }
     max_workers = args.workers
 
@@ -228,6 +230,7 @@ def run_all_tests(args):
     print(f"  lambda_overlap: {training_config['lambda_overlap']}")
     print(f"  scheduler: {training_config['scheduler_name']}")
     print(f"  scheduler_kwargs: {training_config['scheduler_kwargs']}")
+    print(f"  device: {training_config['device']}")
     print(f"  track_loss_history: {training_config['track_loss_history']}")
     print(f"  track_overlap_metrics: {training_config['track_overlap_metrics']}")
     print(f"  early_stop_enabled: {training_config['early_stop_enabled']}")

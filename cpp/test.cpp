@@ -120,6 +120,11 @@ void printBenchmarkResult(const placement::BenchmarkResult& result) {
               << "/" << result.total_cells << " cells)\n";
     std::cout << "  Normalized WL: " << std::fixed << std::setprecision(4)
               << result.normalized_wl << "\n";
+    std::cout << "  Epochs Completed: " << result.epochs_completed << "\n";
+    if (result.stopped_early) {
+        std::cout << "  Stopped Early: " << result.stop_reason
+                  << " at best epoch " << result.best_epoch << "\n";
+    }
     std::cout << "  Time: " << std::fixed << std::setprecision(2)
               << result.elapsed_seconds << "s\n";
     std::cout << "  Status: " << status << "\n\n";

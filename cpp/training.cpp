@@ -168,6 +168,7 @@ TrainingResult trainPlacement(
     bool zero_overlap_reached = false;
 
     for (int epoch = 0; epoch < config.num_epochs; ++epoch) {
+        result.epochs_completed = epoch + 1;
         optimizer.zero_grad();
 
         auto current_cell_features =

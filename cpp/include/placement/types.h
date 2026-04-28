@@ -62,6 +62,7 @@ struct TrainingResult {
     bool stopped_early = false;
     std::string stop_reason;
     int best_epoch = -1;
+    int epochs_completed = 0;
 };
 
 struct OverlapMetrics {
@@ -101,6 +102,10 @@ struct BenchmarkResult {
     double overlap_ratio = 0.0;
     double normalized_wl = 0.0;
     bool passed = false;
+    bool stopped_early = false;
+    std::string stop_reason;
+    int best_epoch = -1;
+    int epochs_completed = 0;
 };
 
 struct BenchmarkSummary {

@@ -275,6 +275,7 @@ void trainingWithNoEpochsReturnsInitialPlacement() {
         "zero-epoch final features");
     expect(!result.stopped_early, "zero-epoch does not stop early");
     expect(result.best_epoch == -1, "zero-epoch best epoch");
+    expect(result.epochs_completed == 0, "zero-epoch epochs completed");
 }
 
 void trainingReducesOverlapLoss() {
@@ -312,6 +313,9 @@ void trainingReducesOverlapLoss() {
         torch::allclose(result.initial_cell_features, cell_features),
         "training preserves initial features");
     expect(!result.stopped_early, "overlap-only training no early stop");
+    expect(
+        result.epochs_completed == config.num_epochs,
+        "overlap-only training epochs completed");
 }
 
 void trainingReducesWirelengthLoss() {
@@ -353,6 +357,9 @@ void trainingReducesWirelengthLoss() {
                                 .item<double>();
 
     expect(final_wl < initial_wl, "training reduces wirelength");
+    expect(
+        result.epochs_completed == config.num_epochs,
+        "wirelength training epochs completed");
 }
 
 void trainingReportsEarlyStopMetadata() {
@@ -386,6 +393,7 @@ void trainingReportsEarlyStopMetadata() {
         result.stop_reason == "zero_overlap_plateau",
         "training early stop reason");
     expect(result.best_epoch == 0, "training best epoch");
+    expect(result.epochs_completed == 2, "early-stop epochs completed");
 }
 
 void activeBenchmarkCasesMatchPythonReference() {
@@ -447,6 +455,9 @@ void benchmarkCasePopulatesMetricsAndUsesSeed() {
     expect(
         first.passed == (first.num_cells_with_overlaps == 0),
         "benchmark pass flag");
+    expect(first.epochs_completed == config.num_epochs, "benchmark epochs completed");
+    expect(first.stopped_early == false, "benchmark early stop flag");
+    expect(first.best_epoch == -1, "benchmark best epoch");
 
     expect(first.num_nets == second.num_nets, "benchmark seeded net count");
     expectNear(

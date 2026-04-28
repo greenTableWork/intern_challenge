@@ -91,6 +91,7 @@ def run_optuna_search(
                 early_stop_min_delta=args.early_stop_min_delta,
                 early_stop_overlap_threshold=args.early_stop_overlap_threshold,
                 early_stop_zero_overlap_patience=args.early_stop_zero_overlap_patience,
+                device=device,
             )
 
             metrics = calculate_normalized_metrics(

@@ -102,6 +102,12 @@ def parse_args():
         help="Random seed used to generate and initialize the placement problem.",
     )
     parser.add_argument(
+        "--device",
+        choices=("auto", "cpu", "cuda", "mps"),
+        default="auto",
+        help="Torch device to use. 'auto' selects cuda, then mps, then cpu.",
+    )
+    parser.add_argument(
         "--test-case-id",
         type=int,
         choices=sorted(TEST_CASES_BY_ID),

@@ -73,6 +73,19 @@ def get_best_device():
     return torch.device("cpu")
 
 
+def resolve_device(device_name=None):
+    """Resolve a requested torch device and validate backend availability."""
+    if device_name is None or str(device_name).lower() == "auto":
+        return get_best_device()
+
+    device = torch.device(device_name)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA device requested but CUDA is not available.")
+    if device.type == "mps" and not torch.backends.mps.is_available():
+        raise RuntimeError("MPS device requested but MPS is not available.")
+    return device
+
+
 def seed_torch(seed):
     """Seed torch RNGs across supported backends."""
     torch.manual_seed(seed)
@@ -349,7 +362,12 @@ def wirelength_attraction_loss(cell_features, pin_features, edge_list):
         Scalar loss value
     """
     if edge_list.shape[0] == 0:
-        return torch.tensor(0.0, requires_grad=True, device=cell_features.device)
+        return torch.tensor(
+            0.0,
+            requires_grad=True,
+            device=cell_features.device,
+            dtype=cell_features.dtype,
+        )
 
     # Update absolute pin positions based on cell positions
     cell_positions = cell_features[:, 2:4]  # [N, 2]
@@ -555,6 +573,7 @@ def train_placement(
     early_stop_min_delta=1e-4,
     early_stop_overlap_threshold=1e-4,
     early_stop_zero_overlap_patience=25,
+    device=None,
 ):
     """Train the placement optimization using gradient descent.
 
@@ -580,6 +599,8 @@ def train_placement(
         early_stop_min_delta: Minimum improvement to reset patience
         early_stop_overlap_threshold: Treat overlap below this as effectively zero
         early_stop_zero_overlap_patience: Extra patience after zero-overlap to keep improving wirelength
+        device: Optional torch device override. When omitted, CPU inputs are moved
+            to the best available device.
 
     Returns:
         Dictionary with:
@@ -587,9 +608,12 @@ def train_placement(
             - initial_cell_features: Original cell positions (for comparison)
             - loss_history: Loss values over time
     """
-    device = cell_features.device
-    if device.type == "cpu":
-        device = get_best_device()
+    if device is None:
+        device = cell_features.device
+        if device.type == "cpu":
+            device = get_best_device()
+    else:
+        device = resolve_device(device)
 
     # Clone features and create learnable positions
     cell_features = cell_features.clone().to(device)
@@ -1075,10 +1099,11 @@ def plot_placement(
 def main(args):
     """Main function demonstrating the placement optimization challenge."""
     torch_profiler_config = build_torch_profiler_config_from_args(args)
+    device = resolve_device(args.device)
     if args.optuna:
         run_optuna_search(
             args,
-            get_best_device=get_best_device,
+            get_best_device=lambda: device,
             seed_torch=seed_torch,
             generate_placement_input=generate_placement_input,
             initialize_cell_positions=initialize_cell_positions,
@@ -1098,7 +1123,6 @@ def main(args):
         test_case = TEST_CASES_BY_ID[args.test_case_id]
 
     # Set random seed for reproducibility
-    device = get_best_device()
     seed = test_case["seed"] if test_case is not None else args.seed
     seed_torch(seed)
 
@@ -1175,6 +1199,7 @@ def main(args):
         early_stop_min_delta=args.early_stop_min_delta,
         early_stop_overlap_threshold=args.early_stop_overlap_threshold,
         early_stop_zero_overlap_patience=args.early_stop_zero_overlap_patience,
+        device=device,
     )
     if args.track_loss_history:
         loss_history_path = save_loss_history_sqlite(
