@@ -1,6 +1,7 @@
 #include "placement/benchmark.h"
 #include "placement/generation.h"
 #include "placement/metrics.h"
+#include "placement/sqlite_utils.hpp"
 #include "placement/training.h"
 #include "placement/types.h"
 #include "placement/visualization.h"
@@ -25,6 +26,10 @@
 #include <vector>
 
 namespace {
+
+using placement::LossHistoryRunMetadata;
+using placement::createLossTrackingDb;
+using placement::saveLossHistorySqlite;
 
 struct CliOptions {
     bool run_benchmark = false;
@@ -638,6 +643,8 @@ void printTrainingConfig(const placement::TrainingConfig& config) {
     std::cout << "  scheduler_eta_min: " << config.scheduler_eta_min << "\n";
     std::cout << "  scheduler_step_size: " << config.scheduler_step_size << "\n";
     std::cout << "  scheduler_gamma: " << config.scheduler_gamma << "\n";
+    std::cout << "  track_loss_history: "
+              << (config.track_loss_history ? "true" : "false") << "\n";
     std::cout << "  track_overlap_metrics: "
               << (config.track_overlap_metrics ? "true" : "false") << "\n";
     std::cout << "  early_stop_enabled: "
@@ -680,6 +687,15 @@ int runBenchmark(
     printTrainingConfig(config);
     std::cout << "\n";
 
+    std::optional<std::filesystem::path> loss_tracking_db_path;
+    if (config.track_loss_history) {
+        loss_tracking_db_path = createLossTrackingDb();
+        std::cout << "Writing loss history to: "
+                  << loss_tracking_db_path->string() << "\n\n";
+    } else {
+        std::cout << "Loss history tracking disabled.\n\n";
+    }
+
     int case_index = 1;
     for (const placement::BenchmarkCase& test_case :
          placement::activeBenchmarkCases()) {
@@ -699,6 +715,34 @@ int runBenchmark(
         placement::runActiveBenchmarkCases(config);
     for (const placement::BenchmarkResult& result : summary.results) {
         printBenchmarkResult(result);
+    }
+
+    if (loss_tracking_db_path.has_value()) {
+        for (const placement::BenchmarkResult& result : summary.results) {
+            saveLossHistorySqlite(
+                result.loss_history,
+                *loss_tracking_db_path,
+                LossHistoryRunMetadata{
+                    .test_id = result.test_id,
+                    .runner = "placement.cpp --benchmark",
+                    .run_label = "train_placement",
+                    .run_started_at = result.run_started_at,
+                    .seed = result.seed,
+                    .num_macros = result.num_macros,
+                    .num_std_cells = result.num_std_cells,
+                    .num_epochs = config.num_epochs,
+                    .lr = config.lr,
+                    .lambda_wirelength = config.lambda_wirelength,
+                    .lambda_overlap = config.lambda_overlap,
+                    .log_interval = config.log_interval,
+                    .verbose = config.verbose,
+                    .total_cells = result.total_cells,
+                    .total_pins = result.total_pins,
+                    .total_edges = result.num_nets,
+                });
+        }
+        std::cout << "Loss history saved to: "
+                  << loss_tracking_db_path->string() << "\n\n";
     }
 
     printRule();
@@ -776,11 +820,46 @@ int runSinglePlacement(
     printRule();
     std::cout << "RUNNING OPTIMIZATION\n";
     printRule();
+    std::optional<std::filesystem::path> loss_tracking_db_path;
+    if (config.track_loss_history) {
+        loss_tracking_db_path = createLossTrackingDb();
+        std::cout << "Writing loss history to: "
+                  << loss_tracking_db_path->string() << "\n";
+    } else {
+        std::cout << "Loss history tracking disabled.\n";
+    }
+
     placement::TrainingResult training_result = placement::trainPlacement(
         problem.cell_features,
         problem.pin_features,
         problem.edge_list,
         config);
+    if (loss_tracking_db_path.has_value()) {
+        const std::filesystem::path saved_path = saveLossHistorySqlite(
+            training_result.loss_history,
+            *loss_tracking_db_path,
+            LossHistoryRunMetadata{
+                .test_id = selected_case.test_id == 0
+                    ? std::optional<int>()
+                    : std::optional<int>(selected_case.test_id),
+                .runner = "placement.cpp",
+                .run_label = "train_placement",
+                .run_started_at = training_result.run_started_at,
+                .seed = selected_case.seed,
+                .num_macros = selected_case.num_macros,
+                .num_std_cells = selected_case.num_std_cells,
+                .num_epochs = config.num_epochs,
+                .lr = config.lr,
+                .lambda_wirelength = config.lambda_wirelength,
+                .lambda_overlap = config.lambda_overlap,
+                .log_interval = config.log_interval,
+                .verbose = config.verbose,
+                .total_cells = problem.cell_features.size(0),
+                .total_pins = problem.pin_features.size(0),
+                .total_edges = problem.edge_list.size(0),
+            });
+        std::cout << "Loss history saved to: " << saved_path.string() << "\n";
+    }
 
     std::cout << "\n";
     printRule();
@@ -915,9 +994,37 @@ void configureCli(
         config.scheduler_gamma,
         "Gamma decay for step and exponential schedulers.");
     app.add_flag(
+        "--track-loss-history",
+        [&config](int64_t count) {
+            if (count > 0) {
+                config.track_loss_history = true;
+            }
+        },
+        "Collect and persist per-epoch loss history to SQLite.");
+    app.add_flag(
+        "--no-track-loss-history",
+        [&config](int64_t count) {
+            if (count > 0) {
+                config.track_loss_history = false;
+            }
+        },
+        "Disable per-epoch loss-history persistence.");
+    app.add_flag(
         "--track-overlap-metrics",
-        config.track_overlap_metrics,
+        [&config](int64_t count) {
+            if (count > 0) {
+                config.track_overlap_metrics = true;
+            }
+        },
         "Compute overlap metrics every epoch.");
+    app.add_flag(
+        "--no-track-overlap-metrics",
+        [&config](int64_t count) {
+            if (count > 0) {
+                config.track_overlap_metrics = false;
+            }
+        },
+        "Disable per-epoch overlap-metric tracking.");
     app.add_flag(
         "--no-early-stop",
         [&config](int64_t count) {

@@ -72,6 +72,7 @@ BenchmarkResult runBenchmarkCaseImpl(
     result.num_macros = test_case.num_macros;
     result.num_std_cells = test_case.num_std_cells;
     result.total_cells = metrics.total_cells;
+    result.total_pins = problem.pin_features.size(0);
     result.num_nets = metrics.num_nets;
     result.seed = test_case.seed;
     result.device = benchmark_config.device;
@@ -82,8 +83,10 @@ BenchmarkResult runBenchmarkCaseImpl(
     result.passed = result.num_cells_with_overlaps == 0;
     result.stopped_early = training_result.stopped_early;
     result.stop_reason = training_result.stop_reason;
+    result.run_started_at = training_result.run_started_at;
     result.best_epoch = training_result.best_epoch;
     result.epochs_completed = training_result.epochs_completed;
+    result.loss_history = training_result.loss_history;
     return result;
 }
 

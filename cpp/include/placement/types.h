@@ -56,13 +56,25 @@ struct TrainingConfig {
     int log_interval = 100;
 };
 
+struct LossHistory {
+    std::vector<double> total_loss;
+    std::vector<double> wirelength_loss;
+    std::vector<double> overlap_loss;
+    std::vector<double> learning_rate;
+    std::vector<int> overlap_count;
+    std::vector<double> total_overlap_area;
+    std::vector<double> max_overlap_area;
+};
+
 struct TrainingResult {
     torch::Tensor final_cell_features;
     torch::Tensor initial_cell_features;
     bool stopped_early = false;
     std::string stop_reason;
+    std::string run_started_at;
     int best_epoch = -1;
     int epochs_completed = 0;
+    LossHistory loss_history;
 };
 
 struct OverlapMetrics {
@@ -94,6 +106,7 @@ struct BenchmarkResult {
     int num_macros = 0;
     int num_std_cells = 0;
     int64_t total_cells = 0;
+    int64_t total_pins = 0;
     int64_t num_nets = 0;
     int seed = 0;
     c10::DeviceType device = torch::kCPU;
@@ -104,8 +117,10 @@ struct BenchmarkResult {
     bool passed = false;
     bool stopped_early = false;
     std::string stop_reason;
+    std::string run_started_at;
     int best_epoch = -1;
     int epochs_completed = 0;
+    LossHistory loss_history;
 };
 
 struct BenchmarkSummary {

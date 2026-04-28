@@ -4,10 +4,14 @@
 #include "placement/metrics.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 
 namespace {
@@ -50,6 +54,27 @@ void clipGradientNorm(const torch::Tensor& tensor, double max_norm) {
         const double scale = max_norm / (grad_norm + 1e-12);
         tensor.grad().mul_(scale);
     }
+}
+
+std::tm localTime(std::time_t time) {
+    std::tm local_time{};
+#if defined(_WIN32)
+    localtime_s(&local_time, &time);
+#else
+    localtime_r(&time, &local_time);
+#endif
+    return local_time;
+}
+
+std::string isoTimestampSeconds(
+    std::chrono::system_clock::time_point timestamp) {
+    const std::time_t now_time =
+        std::chrono::system_clock::to_time_t(timestamp);
+    const std::tm local_time = localTime(now_time);
+
+    std::ostringstream output;
+    output << std::put_time(&local_time, "%Y-%m-%dT%H:%M:%S");
+    return output.str();
 }
 
 class LearningRateScheduler {
@@ -135,6 +160,8 @@ TrainingResult trainPlacement(
     const torch::Tensor& edge_list,
     const TrainingConfig& config) {
     TrainingResult result;
+    result.run_started_at =
+        isoTimestampSeconds(std::chrono::system_clock::now());
     auto working_cell_features = cell_features.clone();
     auto working_pin_features = pin_features.to(working_cell_features.device());
     auto working_edge_list = edge_list.to(working_cell_features.device());
@@ -263,6 +290,22 @@ TrainingResult trainPlacement(
                         result.stop_reason = "overlap_plateau";
                     }
                 }
+            }
+        }
+
+        if (config.track_loss_history) {
+            result.loss_history.total_loss.push_back(total_loss.item<double>());
+            result.loss_history.wirelength_loss.push_back(wl_loss.item<double>());
+            result.loss_history.overlap_loss.push_back(overlap_loss.item<double>());
+            result.loss_history.learning_rate.push_back(
+                optimizerLearningRate(optimizer));
+            if (config.track_overlap_metrics) {
+                result.loss_history.overlap_count.push_back(
+                    overlap_metrics.overlap_count);
+                result.loss_history.total_overlap_area.push_back(
+                    overlap_metrics.total_overlap_area);
+                result.loss_history.max_overlap_area.push_back(
+                    overlap_metrics.max_overlap_area);
             }
         }
 

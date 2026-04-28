@@ -4,6 +4,7 @@
   "version-string": "0.1.0",
   "dependencies": [
     "cli11",
-    "matplotlib-cpp"
+    "matplotlib-cpp",
+    "sqlite3"
   ]
 }

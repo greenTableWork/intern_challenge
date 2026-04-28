@@ -110,6 +110,7 @@ list(PREPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX_PATH}")
 
 find_package(Torch CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
+find_package(SQLite3 REQUIRED)
 find_path(MATPLOTLIB_CPP_INCLUDE_DIRS "matplotlibcpp.h" REQUIRED)
 
 add_library(
@@ -118,6 +119,7 @@ add_library(
   generation.cpp
   losses.cpp
   metrics.cpp
+  sqlite_utils.cpp
   training.cpp
   visualization.cpp
 )
@@ -127,12 +129,22 @@ target_compile_definitions(
   placement_core
   PRIVATE
     PLACEMENT_PYTHON_SITE_PACKAGES="${PYTHON_SITE_PACKAGES}"
+    PLACEMENT_REPO_ROOT="${CMAKE_CURRENT_LIST_DIR}/.."
 )
-target_link_libraries(placement_core PUBLIC "${TORCH_LIBRARIES}" Python3::Python)
+target_link_libraries(
+  placement_core
+  PUBLIC "${TORCH_LIBRARIES}" Python3::Python
+  PRIVATE SQLite::SQLite3
+)
 target_compile_features(placement_core PUBLIC cxx_std_20)
 enable_placement_coverage(placement_core)
 
 add_executable(placement placement.cpp)
+target_compile_definitions(
+  placement
+  PRIVATE
+    PLACEMENT_REPO_ROOT="${CMAKE_CURRENT_LIST_DIR}/.."
+)
 target_link_libraries(placement PRIVATE placement_core CLI11::CLI11)
 target_compile_features(placement PRIVATE cxx_std_20)
 enable_placement_coverage(placement)
