@@ -1,4 +1,5 @@
 #include "placement/benchmark.h"
+#include "placement/profiler.h"
 #include "placement/types.h"
 
 #include <CLI/CLI.hpp>
@@ -240,6 +241,7 @@ int runTestSuite(
     const TestOptions& options,
     const placement::TrainingConfig& config,
     const char* binary_path) {
+    ZoneScopedN("placement_test runTestSuite");
     printRule();
     std::cout << "PLACEMENT CHALLENGE TEST SUITE\n";
     printRule();
@@ -277,6 +279,7 @@ int runTestSuite(
 }  // namespace
 
 int main(int argc, char** argv) {
+    ZoneScopedN("placement_test main");
     TestOptions options;
     placement::TrainingConfig config;
     config.verbose = false;

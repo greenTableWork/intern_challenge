@@ -5,6 +5,7 @@
   "dependencies": [
     "cli11",
     "matplotlib-cpp",
-    "sqlite3"
+    "sqlite3",
+    "tracy"
   ]
 }

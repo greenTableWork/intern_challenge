@@ -7,7 +7,7 @@
 
 
 */.ipynb_checkpoints/*
-profile/*
+*/profile/*
 torch_profile/*
 loss_history/*
 loss_tracking/*
@@ -19,9 +19,9 @@ temp.txt
 
 # C++ build and vcpkg manifest artifacts
 cpp/build/
+cpp/build_profile/
+cpp/build_debug/
 cpp/build-xcode/
 cpp/build-coverage/
 cpp/vcpkg_installed/
 cpp/.vcpkg-root
-
-

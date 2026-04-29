@@ -1,6 +1,7 @@
 #include "placement/benchmark.h"
 #include "placement/generation.h"
 #include "placement/metrics.h"
+#include "placement/profiler.h"
 #include "placement/sqlite_utils.hpp"
 #include "placement/training.h"
 #include "placement/types.h"
@@ -679,6 +680,7 @@ void printBenchmarkResult(const placement::BenchmarkResult& result) {
 int runBenchmark(
     const CliOptions& options,
     const placement::TrainingConfig& config) {
+    ZoneScopedN("placement runBenchmark");
     printRule();
     std::cout << "PLACEMENT CHALLENGE TEST SUITE\n";
     printRule();
@@ -765,6 +767,7 @@ int runBenchmark(
 int runSinglePlacement(
     const CliOptions& options,
     const placement::TrainingConfig& config) {
+    ZoneScopedN("placement runSinglePlacement");
     placement::BenchmarkCase selected_case{
         0,
         options.num_macros,
@@ -796,11 +799,15 @@ int runSinglePlacement(
 
     seedTorch(selected_case.seed);
     const torch::Device device(config.device);
-    placement::PlacementProblem problem = placement::generatePlacementInput(
-        selected_case.num_macros,
-        selected_case.num_std_cells,
-        device);
-    placement::initializeCellPositions(problem.cell_features);
+    placement::PlacementProblem problem;
+    {
+        ZoneScopedN("single placement generate problem");
+        problem = placement::generatePlacementInput(
+            selected_case.num_macros,
+            selected_case.num_std_cells,
+            device);
+        placement::initializeCellPositions(problem.cell_features);
+    }
 
     std::cout << "\n";
     printRule();
@@ -829,11 +836,15 @@ int runSinglePlacement(
         std::cout << "Loss history tracking disabled.\n";
     }
 
-    placement::TrainingResult training_result = placement::trainPlacement(
-        problem.cell_features,
-        problem.pin_features,
-        problem.edge_list,
-        config);
+    placement::TrainingResult training_result;
+    {
+        ZoneScopedN("single placement train");
+        training_result = placement::trainPlacement(
+            problem.cell_features,
+            problem.pin_features,
+            problem.edge_list,
+            config);
+    }
     if (loss_tracking_db_path.has_value()) {
         const std::filesystem::path saved_path = saveLossHistorySqlite(
             training_result.loss_history,
@@ -1093,6 +1104,7 @@ void validateOptions(
 }  // namespace
 
 int main(int argc, char** argv) {
+    ZoneScopedN("placement main");
     CliOptions options;
     placement::TrainingConfig config;
     config.log_interval = 200;

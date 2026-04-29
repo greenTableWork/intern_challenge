@@ -2,6 +2,7 @@
 
 #include "placement/generation.h"
 #include "placement/metrics.h"
+#include "placement/profiler.h"
 #include "placement/training.h"
 
 #include <atomic>
@@ -21,6 +22,7 @@ PlacementProblem generateSeededProblem(
     const BenchmarkCase& test_case,
     const TrainingConfig& benchmark_config,
     std::mutex* rng_mutex) {
+    ZoneScopedN("generateSeededProblem");
     const auto generate = [&]() {
         if (test_case.seed != 0) {
             torch::manual_seed(test_case.seed);
@@ -48,6 +50,7 @@ BenchmarkResult runBenchmarkCaseImpl(
     const BenchmarkCase& test_case,
     const TrainingConfig& config,
     std::mutex* rng_mutex) {
+    ZoneScopedN("runBenchmarkCase");
     TrainingConfig benchmark_config = config;
     benchmark_config.verbose = false;
 
@@ -144,6 +147,7 @@ BenchmarkSummary runBenchmarkCases(
     const std::vector<BenchmarkCase>& test_cases,
     const TrainingConfig& config,
     int worker_count) {
+    ZoneScopedN("runBenchmarkCases");
     if (worker_count <= 0) {
         throw std::invalid_argument("Worker count must be positive");
     }
@@ -158,6 +162,7 @@ BenchmarkSummary runBenchmarkCases(
 
     if (worker_count == 1) {
         for (const BenchmarkCase& test_case : test_cases) {
+            FrameMarkNamed("BenchmarkCase");
             addResultToSummary(
                 summary,
                 runBenchmarkCaseImpl(test_case, config, nullptr));
@@ -181,6 +186,7 @@ BenchmarkSummary runBenchmarkCases(
                     }
 
                     try {
+                        FrameMarkNamed("BenchmarkCase");
                         ordered_results[index] = runBenchmarkCaseImpl(
                             test_cases[index],
                             config,

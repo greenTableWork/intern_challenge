@@ -5,10 +5,14 @@ project(placement_cpp LANGUAGES CXX)
 include(CTest)
 
 option(PLACEMENT_ENABLE_COVERAGE "Enable LLVM source-based coverage for unit tests" OFF)
+option(PLACEMENT_ENABLE_TRACY "Enable Tracy profiler instrumentation" ON)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_EXTENSIONS OFF)
 
 if(PLACEMENT_ENABLE_COVERAGE)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -111,6 +115,9 @@ list(PREPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX_PATH}")
 find_package(Torch CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
 find_package(SQLite3 REQUIRED)
+if(PLACEMENT_ENABLE_TRACY)
+  find_package(Tracy CONFIG REQUIRED)
+endif()
 find_path(MATPLOTLIB_CPP_INCLUDE_DIRS "matplotlibcpp.h" REQUIRED)
 
 add_library(
@@ -136,7 +143,11 @@ target_link_libraries(
   PUBLIC "${TORCH_LIBRARIES}" Python3::Python
   PRIVATE SQLite::SQLite3
 )
-target_compile_features(placement_core PUBLIC cxx_std_20)
+if(PLACEMENT_ENABLE_TRACY)
+  target_link_libraries(placement_core PUBLIC Tracy::TracyClient)
+  target_compile_definitions(placement_core PUBLIC PLACEMENT_ENABLE_TRACY)
+endif()
+target_compile_features(placement_core PUBLIC cxx_std_23)
 enable_placement_coverage(placement_core)
 
 add_executable(placement placement.cpp)
@@ -146,12 +157,12 @@ target_compile_definitions(
     PLACEMENT_REPO_ROOT="${CMAKE_CURRENT_LIST_DIR}/.."
 )
 target_link_libraries(placement PRIVATE placement_core CLI11::CLI11)
-target_compile_features(placement PRIVATE cxx_std_20)
+target_compile_features(placement PRIVATE cxx_std_23)
 enable_placement_coverage(placement)
 
 add_executable(placement_test test.cpp)
 target_link_libraries(placement_test PRIVATE placement_core CLI11::CLI11)
-target_compile_features(placement_test PRIVATE cxx_std_20)
+target_compile_features(placement_test PRIVATE cxx_std_23)
 enable_placement_coverage(placement_test)
 
 if(BUILD_TESTING)
@@ -161,7 +172,7 @@ if(BUILD_TESTING)
     tests/visualization_tests.cpp
   )
   target_link_libraries(placement_unit_tests PRIVATE placement_core)
-  target_compile_features(placement_unit_tests PRIVATE cxx_std_20)
+  target_compile_features(placement_unit_tests PRIVATE cxx_std_23)
   enable_placement_coverage(placement_unit_tests)
   add_test(NAME placement_unit_tests COMMAND placement_unit_tests)
 

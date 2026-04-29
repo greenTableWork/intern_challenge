@@ -8,6 +8,11 @@
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_CUDA_COMPILER": "/usr/local/cuda-12.6/bin/nvcc",
+        "CMAKE_CUDA_ARCHITECTURES": "75",
+        "CMAKE_CXX_SCAN_FOR_MODULES": "OFF",
+        "CUDAToolkit_ROOT": "/usr/local/cuda-12.6",
+        "CUDA_TOOLKIT_ROOT_DIR": "/usr/local/cuda-12.6",
         "VCPKG_MANIFEST_MODE": "ON"
       }
     },
@@ -20,11 +25,37 @@
       }
     },
     {
+      "name": "profile",
+      "displayName": "profile",
+      "inherits": "vcpkg",
+      "binaryDir": "${sourceDir}/build_profile",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PLACEMENT_ENABLE_TRACY": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug",
+      "inherits": "vcpkg",
+      "binaryDir": "${sourceDir}/build_debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g3 -ggdb -fno-omit-frame-pointer",
+        "CMAKE_CUDA_FLAGS_DEBUG": "-O0 -g -G -lineinfo",
+        "PLACEMENT_ENABLE_TRACY": "OFF"
+      }
+    },
+    {
       "name": "coverage",
       "displayName": "Coverage",
       "inherits": "vcpkg",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "/usr/bin/clang++",
+        "LLVM_COV_EXECUTABLE": "/usr/lib/llvm-18/bin/llvm-cov",
+        "LLVM_PROFDATA_EXECUTABLE": "/usr/lib/llvm-18/bin/llvm-profdata",
         "PLACEMENT_ENABLE_COVERAGE": "ON"
       }
     }
@@ -33,6 +64,14 @@
     {
       "name": "release",
       "configurePreset": "release"
+    },
+    {
+      "name": "profile",
+      "configurePreset": "profile"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug"
     },
     {
       "name": "coverage",

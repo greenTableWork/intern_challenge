@@ -2,6 +2,7 @@
 
 #include "placement/losses.h"
 #include "placement/metrics.h"
+#include "placement/profiler.h"
 
 #include <algorithm>
 #include <chrono>
@@ -159,6 +160,7 @@ TrainingResult trainPlacement(
     const torch::Tensor& pin_features,
     const torch::Tensor& edge_list,
     const TrainingConfig& config) {
+    ZoneScopedN("trainPlacement");
     TrainingResult result;
     result.run_started_at =
         isoTimestampSeconds(std::chrono::system_clock::now());
@@ -196,10 +198,11 @@ TrainingResult trainPlacement(
     bool zero_overlap_reached = false;
 
     for (int epoch = 0; epoch < config.num_epochs; ++epoch) {
+        ZoneScopedN("trainPlacement epoch");
         result.epochs_completed = epoch + 1;
         optimizer.zero_grad();
 
-        auto current_cell_features =
+        const auto current_cell_features =
             makeCellFeaturesWithPositions(working_cell_features, cell_positions);
         const auto wl_loss = wirelengthAttractionLoss(
             current_cell_features,
@@ -215,6 +218,7 @@ TrainingResult trainPlacement(
 
         total_loss.backward();
         clipGradientNorm(cell_positions, 5.0);
+
         optimizer.step();
         scheduler.step(optimizer, total_loss.item<double>());
 
