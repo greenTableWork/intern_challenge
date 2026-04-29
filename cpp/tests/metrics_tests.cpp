@@ -4,6 +4,7 @@
 #include "placement/metrics.h"
 #include "placement/training.h"
 
+#include <torch/cuda.h>
 #include <torch/torch.h>
 
 #include <cmath>
@@ -62,7 +63,7 @@ void deterministicMetricsMatchPythonReference() {
             {2.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
         },
         float_options);
-    const auto edge_list = torch::tensor({{0LL, 2LL}}, long_options);
+    const auto edge_list = torch::tensor({{0, 2}}, long_options);
 
     const placement::OverlapMetrics overlap =
         placement::calculateOverlapMetrics(cell_features);
@@ -140,7 +141,7 @@ void deterministicLossesMatchPythonReference() {
             {2.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
         },
         float_options);
-    const auto edge_list = torch::tensor({{0LL, 2LL}}, long_options);
+    const auto edge_list = torch::tensor({{0, 2}}, long_options);
 
     const auto pairwise_overlap =
         placement::computePairwiseOverlapAreas(cell_features);
@@ -231,7 +232,7 @@ void lossesBackpropagateThroughCellPositions() {
             {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
         },
         float_options);
-    const auto edge_list = torch::tensor({{0LL, 1LL}}, long_options);
+    const auto edge_list = torch::tensor({{0, 1}}, long_options);
 
     const auto loss =
         placement::wirelengthAttractionLoss(cell_features, pin_features, edge_list) +
@@ -259,7 +260,7 @@ void trainingWithNoEpochsReturnsInitialPlacement() {
             {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
         },
         float_options);
-    const auto edge_list = torch::tensor({{0LL, 1LL}}, long_options);
+    const auto edge_list = torch::tensor({{0, 1}}, long_options);
 
     placement::TrainingConfig config;
     config.num_epochs = 0;
@@ -276,6 +277,46 @@ void trainingWithNoEpochsReturnsInitialPlacement() {
     expect(!result.stopped_early, "zero-epoch does not stop early");
     expect(result.best_epoch == -1, "zero-epoch best epoch");
     expect(result.epochs_completed == 0, "zero-epoch epochs completed");
+}
+
+void trainingUsesConfiguredCudaDeviceWhenAvailable() {
+    if (!torch::cuda::is_available()) {
+        return;
+    }
+
+    const auto float_options = torch::TensorOptions().dtype(torch::kFloat32);
+    const auto long_options = torch::TensorOptions().dtype(torch::kInt64);
+
+    const auto cell_features = torch::tensor(
+        {
+            {1.0F, 1.0F, 0.0F, 0.0F, 1.0F, 1.0F},
+            {1.0F, 1.0F, 4.0F, 0.0F, 1.0F, 1.0F},
+        },
+        float_options);
+    const auto pin_features = torch::tensor(
+        {
+            {0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
+            {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
+        },
+        float_options);
+    const auto edge_list = torch::tensor({{0, 1}}, long_options);
+
+    placement::TrainingConfig config;
+    config.device = torch::kCUDA;
+    config.num_epochs = 0;
+    config.verbose = false;
+
+    const placement::TrainingResult result =
+        placement::trainPlacement(cell_features, pin_features, edge_list, config);
+    expect(
+        result.initial_cell_features.device().type() == torch::kCUDA,
+        "configured CUDA initial features");
+    expect(
+        result.final_cell_features.device().type() == torch::kCUDA,
+        "configured CUDA final features");
+    expect(
+        torch::allclose(result.final_cell_features.cpu(), cell_features),
+        "configured CUDA preserves final values");
 }
 
 void trainingReducesOverlapLoss() {
@@ -334,7 +375,7 @@ void trainingReducesWirelengthLoss() {
             {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.1F, 0.1F},
         },
         float_options);
-    const auto edge_list = torch::tensor({{0LL, 1LL}}, long_options);
+    const auto edge_list = torch::tensor({{0, 1}}, long_options);
 
     placement::TrainingConfig config;
     config.num_epochs = 20;
@@ -560,6 +601,7 @@ int main() {
         lossEdgeCasesStayFinite();
         lossesBackpropagateThroughCellPositions();
         trainingWithNoEpochsReturnsInitialPlacement();
+        trainingUsesConfiguredCudaDeviceWhenAvailable();
         trainingReducesOverlapLoss();
         trainingReducesWirelengthLoss();
         trainingReportsEarlyStopMetadata();

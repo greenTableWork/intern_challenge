@@ -162,9 +162,10 @@ TrainingResult trainPlacement(
     TrainingResult result;
     result.run_started_at =
         isoTimestampSeconds(std::chrono::system_clock::now());
-    auto working_cell_features = cell_features.clone();
-    auto working_pin_features = pin_features.to(working_cell_features.device());
-    auto working_edge_list = edge_list.to(working_cell_features.device());
+    const torch::Device training_device(config.device);
+    auto working_cell_features = cell_features.to(training_device).clone();
+    auto working_pin_features = pin_features.to(training_device);
+    auto working_edge_list = edge_list.to(training_device);
 
     result.initial_cell_features = working_cell_features.clone();
     if (config.num_epochs <= 0 || working_cell_features.size(0) == 0) {
