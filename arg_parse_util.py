@@ -227,7 +227,7 @@ def parse_args():
     parser.add_argument(
         "--early-stop-overlap-threshold",
         type=float,
-        default=1e-4,
+        default=0.0,
         help="Treat overlap below this value as effectively zero for early stopping.",
     )
     parser.add_argument(

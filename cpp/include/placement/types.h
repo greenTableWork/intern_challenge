@@ -50,7 +50,7 @@ struct TrainingConfig {
     bool early_stop_enabled = true;
     int early_stop_patience = 75;
     double early_stop_min_delta = 1e-4;
-    double early_stop_overlap_threshold = 1e-4;
+    double early_stop_overlap_threshold = 0.0;
     int early_stop_zero_overlap_patience = 25;
     bool verbose = true;
     int log_interval = 100;

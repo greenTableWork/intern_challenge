@@ -571,7 +571,7 @@ def train_placement(
     early_stop_enabled=True,
     early_stop_patience=75,
     early_stop_min_delta=1e-4,
-    early_stop_overlap_threshold=1e-4,
+    early_stop_overlap_threshold=0.0,
     early_stop_zero_overlap_patience=25,
     device=None,
 ):
