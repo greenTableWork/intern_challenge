@@ -23,6 +23,17 @@
 - [x] Add rendering capabilities to the CUDA path for generated placement states.
 - [ ] Remove remaining `.item<>`, host-loop, `std::vector`, and `from_blob` sync points from the CUDA path.
 
+## CUDA Training Milestones
+- [ ] Add CUDA implementation of the wirelength attraction loss.
+- [ ] Add CUDA implementation of the overlap repulsion loss.
+- [ ] Add a CUDA-resident gradient tracking state for trainable cell positions.
+- [ ] Add forward-pass kernels that evaluate losses from CUDA placement tensors.
+- [ ] Add backward-pass kernels that accumulate gradients into the CUDA gradient state.
+- [ ] Add an on-device optimizer step for updating cell positions without host synchronization.
+- [ ] Add a training epoch loop that runs forward, backward, optimizer, and gradient reset on device.
+- [ ] Add debug/profiling checks for per-epoch loss values and position updates.
+- [ ] Render the CUDA placement after training epochs once the on-device training loop is active.
+
 ## Build And Profiling Flags
 - Add a `placement_cuda` profiling toggle in CMake, defaulting on for Debug-style builds and off for Release unless explicitly enabled.
 - Use explicit compile definitions for implementation checks:
@@ -44,6 +55,8 @@
   - `placement_cuda` has no TorchScript include or JIT call.
   - CUDA tensors remain CUDA-resident and preserve expected shapes and dtypes.
   - Debug builds of `placement_cuda` render `placement_cuda_tensor_setup_debug.png` from the CUDA-initialized positions as the initial placement.
+  - CUDA training keeps loss tensors, gradients, optimizer state, and position updates on device.
+  - Training renders distinguish initial CUDA placement from post-training CUDA placement once epochs are implemented.
 
 ## Assumptions
 - `placement_cuda` is allowed to diverge implementation details from the JIT prototype while preserving the default tensor schema.

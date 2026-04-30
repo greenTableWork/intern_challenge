@@ -48,16 +48,33 @@ void visualizationWritesPngWithExpectedContent() {
     const std::filesystem::path output_path =
         std::filesystem::temp_directory_path() / "placement_cpp_visualization_tests" /
         "nested" / "tiny_placement.png";
+    const std::filesystem::path single_output_path =
+        output_path.parent_path() / "single_placement.png";
     std::filesystem::remove(output_path);
+    std::filesystem::remove(single_output_path);
 
     placement::plotPlacement(initial_cell_features, final_cell_features, output_path);
+    placement::plotPlacementState(initial_cell_features, single_output_path, "Initial Placement");
 
     expect(std::filesystem::exists(output_path), "visualization output exists");
     expect(std::filesystem::file_size(output_path) > 0, "visualization output is nonempty");
+    expect(
+        std::filesystem::exists(single_output_path),
+        "single-state visualization output exists");
+    expect(
+        std::filesystem::file_size(single_output_path) > 0,
+        "single-state visualization output is nonempty");
 
     const std::string content = readFile(output_path);
     expect(content.size() > 8, "visualization output has png header bytes");
     expect(
         static_cast<unsigned char>(content[0]) == 0x89 && content.substr(1, 3) == "PNG",
         "visualization output is a png");
+
+    const std::string single_content = readFile(single_output_path);
+    expect(single_content.size() > 8, "single-state visualization output has png header bytes");
+    expect(
+        static_cast<unsigned char>(single_content[0]) == 0x89 &&
+            single_content.substr(1, 3) == "PNG",
+        "single-state visualization output is a png");
 }
