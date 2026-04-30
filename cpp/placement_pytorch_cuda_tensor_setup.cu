@@ -10,7 +10,14 @@
 
 namespace {
 
-constexpr int64_t kCellFeatureCount = 6;
+namespace cuda_setup = placement_cuda;
+
+constexpr int64_t kCellFeatureCount =
+    static_cast<int64_t>(cuda_setup::CellFeatureIdx::Count);
+
+__device__ __forceinline__ int64_t featureIndex(cuda_setup::CellFeatureIdx idx) {
+    return static_cast<int64_t>(idx);
+}
 
 __global__ void placementTensorSetupKernel(
     float* macro_areas,
@@ -33,6 +40,7 @@ __global__ void placementTensorSetupKernel(
         float area = 0.0F;
         float width = 0.0F;
         float height = 0.0F;
+        // rng used by pytorch
         curandStatePhilox4_32_10_t rng;
         curand_init(
             static_cast<unsigned long long>(seed),
@@ -62,12 +70,18 @@ __global__ void placementTensorSetupKernel(
         cell_heights[cell_idx] = height;
 
         const int64_t feature_offset = cell_idx * kCellFeatureCount;
-        cell_features[feature_offset + 0] = area;
-        cell_features[feature_offset + 1] = 0.0F;
-        cell_features[feature_offset + 2] = 0.0F;
-        cell_features[feature_offset + 3] = 0.0F;
-        cell_features[feature_offset + 4] = width;
-        cell_features[feature_offset + 5] = height;
+        cell_features[feature_offset + featureIndex(cuda_setup::CellFeatureIdx::Area)] =
+            area;
+        cell_features[feature_offset + featureIndex(cuda_setup::CellFeatureIdx::NumPins)] =
+            0.0F;
+        cell_features[feature_offset + featureIndex(cuda_setup::CellFeatureIdx::X)] =
+            0.0F;
+        cell_features[feature_offset + featureIndex(cuda_setup::CellFeatureIdx::Y)] =
+            0.0F;
+        cell_features[feature_offset + featureIndex(cuda_setup::CellFeatureIdx::Width)] =
+            width;
+        cell_features[feature_offset + featureIndex(cuda_setup::CellFeatureIdx::Height)] =
+            height;
     }
 }
 

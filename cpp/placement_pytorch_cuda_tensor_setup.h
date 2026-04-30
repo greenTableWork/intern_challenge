@@ -4,6 +4,20 @@
 
 #include <cstdint>
 
+namespace placement_cuda {
+
+enum class CellFeatureIdx : int64_t {
+    Area = 0,
+    NumPins = 1,
+    X = 2,
+    Y = 3,
+    Width = 4,
+    Height = 5,
+    Count = 6,
+};
+
+}  // namespace placement_cuda
+
 void fillPlacementTensorSetupCuda(
     const at::Tensor& macro_areas,
     const at::Tensor& std_area_indices,
