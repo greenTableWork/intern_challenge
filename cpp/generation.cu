@@ -247,9 +247,11 @@ __global__ void fillPinFeaturesKernel(
 __global__ void fillEdgeListKernel(
     int64_t* edge_list_capacity,
     int64_t* edge_count,
-    int64_t total_pins,
+    const int64_t* pin_offsets,
+    int64_t total_cells,
     int64_t max_edges,
     uint64_t seed) {
+    const int64_t total_pins = pin_offsets[total_cells];
     if (total_pins < 2) {
         return;
     }
@@ -419,15 +421,19 @@ void fillPinFeaturesCuda(
 void fillEdgeListCuda(
     const at::Tensor& edge_list_capacity,
     const at::Tensor& edge_count,
-    int64_t total_pins,
+    const at::Tensor& pin_offsets,
+    int64_t total_cells,
+    int64_t max_pin_capacity,
     uint64_t seed) {
-    TORCH_CHECK(total_pins >= 0, "total pins must be non-negative");
+    TORCH_CHECK(total_cells >= 0, "total cells must be non-negative");
+    TORCH_CHECK(max_pin_capacity >= 0, "max pin capacity must be non-negative");
     const int64_t max_edges = edge_list_capacity.size(0);
     checkCudaTensor(edge_list_capacity, at::kLong, {max_edges, 2});
     checkCudaTensor(edge_count, at::kLong, {1});
+    checkCudaTensor(pin_offsets, at::kLong, {total_cells + 1});
     TORCH_CHECK(
-        max_edges == total_pins * kMaxConnectionsPerPin,
-        "edge capacity must be total_pins * max connections per pin");
+        max_edges == max_pin_capacity * kMaxConnectionsPerPin,
+        "edge capacity must be max_pin_capacity * max connections per pin");
 
     auto stream = at::cuda::getCurrentCUDAStream();
     C10_CUDA_CHECK(cudaMemsetAsync(
@@ -435,13 +441,14 @@ void fillEdgeListCuda(
         0,
         sizeof(int64_t),
         stream));
-    if (total_pins < 2 || max_edges == 0) {
+    if (max_pin_capacity < 2 || max_edges == 0) {
         return;
     }
 
     constexpr int threads_per_block = 256;
     const int blocks =
-        static_cast<int>((total_pins + threads_per_block - 1) / threads_per_block);
+        static_cast<int>(
+            (max_pin_capacity + threads_per_block - 1) / threads_per_block);
     fillEdgeListKernel<<<
         blocks,
         threads_per_block,
@@ -449,7 +456,8 @@ void fillEdgeListCuda(
         stream>>>(
         edge_list_capacity.data_ptr<int64_t>(),
         edge_count.data_ptr<int64_t>(),
-        total_pins,
+        pin_offsets.data_ptr<int64_t>(),
+        total_cells,
         max_edges,
         seed);
     C10_CUDA_KERNEL_LAUNCH_CHECK();

@@ -5,6 +5,7 @@
 #include <torch/cuda.h>
 #include <torch/torch.h>
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
@@ -20,6 +21,7 @@ constexpr double kMinMacroArea = 100.0;
 constexpr double kMaxMacroArea = 10000.0;
 constexpr double kStandardCellHeight = 1.0;
 constexpr double kInitialSpreadScale = 0.6;
+constexpr int64_t kMaxStandardCellPins = 6;
 constexpr int64_t kMaxConnectionsPerPin = 3;
 constexpr int64_t kCellFeatureCount =
     static_cast<int64_t>(placement_cuda::CellFeatureIdx::Count);
@@ -58,16 +60,12 @@ void checkTensor(
     TORCH_CHECK(tensor.sizes() == sizes, "unexpected tensor shape");
 }
 
-int64_t readTotalPinsHost(const torch::Tensor& pin_offsets, int64_t total_cells) {
-    // Tensor allocation still needs host shape metadata; later CUDA milestones
-    // can replace this with a capacity-based allocation strategy.
-    return pin_offsets.index({total_cells}).item<int64_t>();
-}
-
-int64_t readEdgeCountHost(const torch::Tensor& edge_count) {
-    // The first CUDA edge-list pass uses a bounded capacity tensor and exposes
-    // the valid prefix to match the existing [E, 2] edge_list schema.
-    return edge_count.item<int64_t>();
+int64_t maxPinCapacity(int64_t macro_count, int64_t std_cell_count) {
+    TORCH_CHECK(macro_count >= 0, "macro count must be non-negative");
+    TORCH_CHECK(std_cell_count >= 0, "standard-cell count must be non-negative");
+    const auto max_macro_pins =
+        2 * static_cast<int64_t>(std::sqrt(kMaxMacroArea));
+    return macro_count * max_macro_pins + std_cell_count * kMaxStandardCellPins;
 }
 
 PlacementTensorSetup buildPlacementTensorSetupCuda(
@@ -114,23 +112,22 @@ PlacementTensorSetup buildPlacementTensorSetupCuda(
     placement_cuda::computePinOffsetsCuda(
         setup.num_pins_per_cell,
         setup.pin_offsets);
-    const int64_t total_pins = readTotalPinsHost(setup.pin_offsets, total_cells);
-    setup.pin_features = torch::empty({total_pins, kPinFeatureCount}, float_options);
+    const int64_t pin_capacity = maxPinCapacity(macro_count, std_cell_count);
+    setup.pin_features = torch::zeros({pin_capacity, kPinFeatureCount}, float_options);
     placement_cuda::fillPinFeaturesCuda(
         setup.cell_features,
         setup.pin_offsets,
         setup.pin_features,
         seed);
-    const int64_t max_edges = total_pins * kMaxConnectionsPerPin;
-    auto edge_list_capacity = torch::empty({max_edges, 2}, long_options);
+    const int64_t max_edges = pin_capacity * kMaxConnectionsPerPin;
+    setup.edge_list = torch::zeros({max_edges, 2}, long_options);
     placement_cuda::fillEdgeListCuda(
-        edge_list_capacity,
+        setup.edge_list,
         setup.edge_count,
-        total_pins,
+        setup.pin_offsets,
+        total_cells,
+        pin_capacity,
         seed);
-    const int64_t total_edges = readEdgeCountHost(setup.edge_count);
-    TORCH_CHECK(total_edges <= max_edges, "CUDA edge count exceeded capacity");
-    setup.edge_list = edge_list_capacity.narrow(0, 0, total_edges);
 
     checkTensor(setup.macro_areas, torch::kFloat32, {macro_count});
     checkTensor(setup.std_area_indices, torch::kInt64, {std_cell_count});
@@ -138,8 +135,8 @@ PlacementTensorSetup buildPlacementTensorSetupCuda(
     checkTensor(setup.areas, torch::kFloat32, {total_cells});
     checkTensor(setup.num_pins_per_cell, torch::kInt64, {total_cells});
     checkTensor(setup.pin_offsets, torch::kInt64, {total_cells + 1});
-    checkTensor(setup.pin_features, torch::kFloat32, {total_pins, kPinFeatureCount});
-    checkTensor(setup.edge_list, torch::kInt64, {total_edges, 2});
+    checkTensor(setup.pin_features, torch::kFloat32, {pin_capacity, kPinFeatureCount});
+    checkTensor(setup.edge_list, torch::kInt64, {max_edges, 2});
     checkTensor(setup.edge_count, torch::kInt64, {1});
     checkTensor(setup.cell_widths, torch::kFloat32, {total_cells});
     checkTensor(setup.cell_heights, torch::kFloat32, {total_cells});
@@ -177,8 +174,10 @@ void printCudaTensorSetupDebug(
     const auto edges_a = edge_list.accessor<int64_t, 2>();
     const auto edge_count_a = edge_count.accessor<int64_t, 1>();
     const auto cells_a = cell_features.accessor<float, 2>();
-    const int64_t total_pins = pin_features.size(0);
-    const int64_t total_edges = edge_list.size(0);
+    const int64_t total_pins = pin_offsets_a[total_cells];
+    const int64_t total_edges = edge_count_a[0];
+    const int64_t pin_capacity = pin_features.size(0);
+    const int64_t edge_capacity = edge_list.size(0);
 
     std::cout << "\nplacement_cuda debug dump\n";
     std::cout << "  seed: " << seed << "\n";
@@ -188,9 +187,9 @@ void printCudaTensorSetupDebug(
     std::cout << "  total pins: " << pin_offsets_a[total_cells] << "\n";
     std::cout << "  total edges: " << total_edges << "\n";
     std::cout << "  edge_count tensor: " << edge_count_a[0] << "\n";
-    std::cout << "  pin_features shape: [" << total_pins << ", "
-              << kPinFeatureCount << "]\n\n";
-    std::cout << "  edge_list shape: [" << total_edges << ", 2]\n\n";
+    std::cout << "  pin_features capacity shape: [" << pin_capacity << ", "
+              << kPinFeatureCount << "]\n";
+    std::cout << "  edge_list capacity shape: [" << edge_capacity << ", 2]\n\n";
 
     std::cout << "macro_areas:";
     for (int64_t index = 0; index < macro_count; ++index) {

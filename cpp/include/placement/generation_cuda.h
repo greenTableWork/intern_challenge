@@ -61,7 +61,9 @@ void fillPinFeaturesCuda(
 void fillEdgeListCuda(
     const at::Tensor& edge_list_capacity,
     const at::Tensor& edge_count,
-    int64_t total_pins,
+    const at::Tensor& pin_offsets,
+    int64_t total_cells,
+    int64_t max_pin_capacity,
     uint64_t seed);
 
 }  // namespace placement_cuda
