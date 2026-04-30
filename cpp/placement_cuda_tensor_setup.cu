@@ -22,8 +22,10 @@ constexpr int64_t kPinFeatureCount =
     static_cast<int64_t>(cuda_setup::PinFeatureIdx::Count);
 constexpr float kTwoPi = 6.2831853071795864769F;
 constexpr float kPinSize = 0.1F;
+constexpr int64_t kMaxConnectionsPerPin = 3;
 constexpr uint64_t kPositionSeedOffset = 0x9E3779B97F4A7C15ULL;
 constexpr uint64_t kPinSeedOffset = 0xD1B54A32D192ED03ULL;
+constexpr uint64_t kEdgeSeedOffset = 0x94D049BB133111EBULL;
 
 __device__ __forceinline__ int64_t featureIndex(cuda_setup::CellFeatureIdx idx) {
     return static_cast<int64_t>(idx);
@@ -242,6 +244,53 @@ __global__ void fillPinFeaturesKernel(
     }
 }
 
+__global__ void fillEdgeListKernel(
+    int64_t* edge_list_capacity,
+    int64_t* edge_count,
+    int64_t total_pins,
+    int64_t max_edges,
+    uint64_t seed) {
+    if (total_pins < 2) {
+        return;
+    }
+
+    for (int64_t pin_idx = blockIdx.x * blockDim.x + threadIdx.x;
+         pin_idx < total_pins;
+         pin_idx += blockDim.x * gridDim.x) {
+        curandStatePhilox4_32_10_t rng;
+        curand_init(
+            static_cast<unsigned long long>(seed + kEdgeSeedOffset),
+            static_cast<unsigned long long>(pin_idx),
+            0,
+            &rng);
+
+        const int64_t num_connections =
+            1 + static_cast<int64_t>(curand(&rng) % kMaxConnectionsPerPin);
+        for (int64_t connection = 0; connection < num_connections; ++connection) {
+            const int64_t other_pin =
+                static_cast<int64_t>(
+                    static_cast<uint64_t>(curand(&rng)) %
+                    static_cast<uint64_t>(total_pins));
+            if (other_pin == pin_idx) {
+                continue;
+            }
+
+            const unsigned long long edge_idx = atomicAdd(
+                reinterpret_cast<unsigned long long*>(edge_count),
+                1ULL);
+            if (edge_idx >= static_cast<unsigned long long>(max_edges)) {
+                continue;
+            }
+
+            const int64_t src_pin = pin_idx < other_pin ? pin_idx : other_pin;
+            const int64_t tgt_pin = pin_idx < other_pin ? other_pin : pin_idx;
+            const int64_t edge_offset = static_cast<int64_t>(edge_idx) * 2;
+            edge_list_capacity[edge_offset] = src_pin;
+            edge_list_capacity[edge_offset + 1] = tgt_pin;
+        }
+    }
+}
+
 void checkCudaTensor(
     const at::Tensor& tensor,
     c10::ScalarType dtype,
@@ -361,6 +410,45 @@ void fillPinFeaturesCuda(
         pin_offsets.data_ptr<int64_t>(),
         pin_features.data_ptr<float>(),
         total_cells,
+        seed);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+void fillEdgeListCuda(
+    const at::Tensor& edge_list_capacity,
+    const at::Tensor& edge_count,
+    int64_t total_pins,
+    uint64_t seed) {
+    TORCH_CHECK(total_pins >= 0, "total pins must be non-negative");
+    const int64_t max_edges = edge_list_capacity.size(0);
+    checkCudaTensor(edge_list_capacity, at::kLong, {max_edges, 2});
+    checkCudaTensor(edge_count, at::kLong, {1});
+    TORCH_CHECK(
+        max_edges == total_pins * kMaxConnectionsPerPin,
+        "edge capacity must be total_pins * max connections per pin");
+
+    auto stream = at::cuda::getCurrentCUDAStream();
+    C10_CUDA_CHECK(cudaMemsetAsync(
+        edge_count.data_ptr<int64_t>(),
+        0,
+        sizeof(int64_t),
+        stream));
+    if (total_pins < 2 || max_edges == 0) {
+        return;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks =
+        static_cast<int>((total_pins + threads_per_block - 1) / threads_per_block);
+    fillEdgeListKernel<<<
+        blocks,
+        threads_per_block,
+        0,
+        stream>>>(
+        edge_list_capacity.data_ptr<int64_t>(),
+        edge_count.data_ptr<int64_t>(),
+        total_pins,
+        max_edges,
         seed);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }

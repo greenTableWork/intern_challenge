@@ -59,3 +59,9 @@ void fillPinFeaturesCuda(
     const at::Tensor& pin_offsets,
     const at::Tensor& pin_features,
     uint64_t seed);
+
+void fillEdgeListCuda(
+    const at::Tensor& edge_list_capacity,
+    const at::Tensor& edge_count,
+    int64_t total_pins,
+    uint64_t seed);

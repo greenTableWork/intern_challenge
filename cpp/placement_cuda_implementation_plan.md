@@ -8,9 +8,10 @@
 ## Current CUDA Progress
 - CUDA tensor setup exists in `placement_cuda_tensor_setup.{h,cu}`.
 - The CUDA setup path allocates tensors in C++ and fills them in a cuRAND-backed CUDA kernel.
-- Current CUDA-filled tensors: `macro_areas`, `std_area_indices`, `std_cell_areas`, `areas`, `num_pins_per_cell`, `pin_offsets`, `pin_features`, `cell_widths`, `cell_heights`, and initial `cell_features`.
+- Current CUDA-filled tensors: `macro_areas`, `std_area_indices`, `std_cell_areas`, `areas`, `num_pins_per_cell`, `pin_offsets`, `pin_features`, `edge_list`, `cell_widths`, `cell_heights`, and initial `cell_features`.
 - CUDA now initializes cell `X`/`Y` positions with a cuRAND-backed kernel after setup, using a CUDA-side area reduction for the spread radius.
 - `pin_features` is allocated with an exact row count using a temporary host read of `pin_offsets[total_cells]`; remove or replace that sync in the final cleanup milestone.
+- `edge_list` is generated in CUDA with a simple bounded `3 * total_pins` capacity and exposed as the valid prefix using a temporary host read of the device edge count; duplicate filtering remains a later optimization.
 - `placement_cuda::CellFeatureIdx` names the cell feature columns used by the CUDA kernel.
 
 ## Migration Milestones
@@ -19,7 +20,7 @@
 - [x] Add debug-mode rendering for the CUDA-initialized placement state.
 - [x] Compute total pin counts and offsets with CUDA-friendly prefix-sum primitives.
 - [x] Allocate and fill `pin_features` in CUDA.
-- [ ] Generate `edge_list` in CUDA, initially accepting a simple bounded edge-count strategy before optimizing duplicate handling.
+- [x] Generate `edge_list` in CUDA, initially accepting a simple bounded edge-count strategy before optimizing duplicate handling.
 - [x] Initialize cell positions in CUDA without host scalar extraction.
 - [x] Add rendering capabilities to the CUDA path for generated placement states.
 - [ ] Remove remaining `.item<>`, host-loop, `std::vector`, and `from_blob` sync points from the CUDA path.
