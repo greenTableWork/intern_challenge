@@ -4,6 +4,7 @@
 *.gif
 *.bmp
 *.csv
+.codex
 
 
 */.ipynb_checkpoints/*
