@@ -1,4 +1,4 @@
-#include "placement_cuda_tensor_setup.h"
+#include "placement/generation_cuda.h"
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -303,6 +303,8 @@ void checkCudaTensor(
 
 }  // namespace
 
+namespace placement_cuda {
+
 void fillPlacementTensorSetupCuda(
     const at::Tensor& macro_areas,
     const at::Tensor& std_area_indices,
@@ -497,3 +499,5 @@ void initializeCellPositionsCuda(
         seed);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
+
+}  // namespace placement_cuda

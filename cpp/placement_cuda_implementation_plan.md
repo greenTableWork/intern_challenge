@@ -6,13 +6,13 @@
 - Keep the default example fixed at `3` macros, `10` standard cells, seed `42`, and no CLI arguments.
 
 ## Current CUDA Progress
-- CUDA tensor setup exists in `placement_cuda_tensor_setup.{h,cu}`.
+- CUDA generation code lives in `placement/generation_cuda.h` and `generation.cu`.
 - The CUDA setup path allocates tensors in C++ and fills them in a cuRAND-backed CUDA kernel.
 - Current CUDA-filled tensors: `macro_areas`, `std_area_indices`, `std_cell_areas`, `areas`, `num_pins_per_cell`, `pin_offsets`, `pin_features`, `edge_list`, `cell_widths`, `cell_heights`, and initial `cell_features`.
 - CUDA now initializes cell `X`/`Y` positions with a cuRAND-backed kernel after setup, using a CUDA-side area reduction for the spread radius.
 - `pin_features` is allocated with an exact row count using a temporary host read of `pin_offsets[total_cells]`; remove or replace that sync in the final cleanup milestone.
 - `edge_list` is generated in CUDA with a simple bounded `3 * total_pins` capacity and exposed as the valid prefix using a temporary host read of the device edge count; duplicate filtering remains a later optimization.
-- `placement_cuda::CellFeatureIdx` names the cell feature columns used by the CUDA kernel.
+- `placement_cuda::CellFeatureIdx` names the cell feature columns used by the CUDA generation kernels.
 
 ## Migration Milestones
 - [x] Create the initial CUDA tensor setup path for areas, dimensions, and initial `cell_features`.
@@ -56,7 +56,7 @@
   - `placement_pytorch_cuda` continues to run the JIT setup path.
   - `placement_cuda` has no TorchScript include or JIT call.
   - CUDA tensors remain CUDA-resident and preserve expected shapes and dtypes.
-  - Debug builds of `placement_cuda` render `placement_cuda_tensor_setup_debug.png` from the CUDA-initialized positions as the initial placement.
+  - Debug builds of `placement_cuda` render `placement_cuda_generation_debug.png` from the CUDA-initialized positions as the initial placement.
   - CUDA training keeps loss tensors, gradients, optimizer state, and position updates on device.
   - Training renders distinguish initial CUDA placement from post-training CUDA placement once epochs are implemented.
 

@@ -175,7 +175,7 @@ enable_placement_coverage(placement_pytorch_cuda)
 add_executable(
   placement_cuda
   placement_cuda.cpp
-  placement_cuda_tensor_setup.cu
+  generation.cu
 )
 target_include_directories(placement_cuda SYSTEM PRIVATE "${TORCH_INCLUDE_DIRS}")
 target_compile_definitions(

@@ -1,4 +1,4 @@
-#include "placement_cuda_tensor_setup.h"
+#include "placement/generation_cuda.h"
 
 #include "placement/visualization.h"
 
@@ -96,7 +96,7 @@ PlacementTensorSetup buildPlacementTensorSetupCuda(
         torch::empty({total_cells, kCellFeatureCount}, float_options),
     };
 
-    fillPlacementTensorSetupCuda(
+    placement_cuda::fillPlacementTensorSetupCuda(
         setup.macro_areas,
         setup.std_area_indices,
         setup.std_cell_areas,
@@ -111,13 +111,23 @@ PlacementTensorSetup buildPlacementTensorSetupCuda(
         kMaxMacroArea,
         kStandardCellHeight,
         seed);
-    computePinOffsetsCuda(setup.num_pins_per_cell, setup.pin_offsets);
+    placement_cuda::computePinOffsetsCuda(
+        setup.num_pins_per_cell,
+        setup.pin_offsets);
     const int64_t total_pins = readTotalPinsHost(setup.pin_offsets, total_cells);
     setup.pin_features = torch::empty({total_pins, kPinFeatureCount}, float_options);
-    fillPinFeaturesCuda(setup.cell_features, setup.pin_offsets, setup.pin_features, seed);
+    placement_cuda::fillPinFeaturesCuda(
+        setup.cell_features,
+        setup.pin_offsets,
+        setup.pin_features,
+        seed);
     const int64_t max_edges = total_pins * kMaxConnectionsPerPin;
     auto edge_list_capacity = torch::empty({max_edges, 2}, long_options);
-    fillEdgeListCuda(edge_list_capacity, setup.edge_count, total_pins, seed);
+    placement_cuda::fillEdgeListCuda(
+        edge_list_capacity,
+        setup.edge_count,
+        total_pins,
+        seed);
     const int64_t total_edges = readEdgeCountHost(setup.edge_count);
     TORCH_CHECK(total_edges <= max_edges, "CUDA edge count exceeded capacity");
     setup.edge_list = edge_list_capacity.narrow(0, 0, total_edges);
@@ -280,7 +290,7 @@ void printCudaTensorSetupDebug(
 #ifdef PLACEMENT_CUDA_ENABLE_DEBUG_RENDER
 std::filesystem::path debugRenderOutputPath() {
     return std::filesystem::path(PLACEMENT_REPO_ROOT) /
-           "placement_cuda_tensor_setup_debug.png";
+           "placement_cuda_generation_debug.png";
 }
 
 void renderCudaTensorSetupDebug(const torch::Tensor& initialized_cell_features) {
@@ -289,7 +299,7 @@ void renderCudaTensorSetupDebug(const torch::Tensor& initialized_cell_features) 
         initialized_cell_features,
         output_path,
         "Initial Placement");
-    std::cout << "Rendered CUDA tensor setup to: " << output_path << "\n";
+    std::cout << "Rendered CUDA generation output to: " << output_path << "\n";
 }
 #endif
 
@@ -299,7 +309,10 @@ void runCudaTensorSetupCheck(
     uint64_t seed) {
     PlacementTensorSetup setup =
         buildPlacementTensorSetupCuda(macro_count, std_cell_count, seed);
-    initializeCellPositionsCuda(setup.cell_features, kInitialSpreadScale, seed);
+    placement_cuda::initializeCellPositionsCuda(
+        setup.cell_features,
+        kInitialSpreadScale,
+        seed);
     torch::cuda::synchronize();
 #ifdef PLACEMENT_CUDA_DEBUG_BUILD
     printCudaTensorSetupDebug(setup, macro_count, std_cell_count, seed);

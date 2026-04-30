@@ -27,8 +27,6 @@ enum class PinFeatureIdx : int64_t {
     Count = 7,
 };
 
-}  // namespace placement_cuda
-
 void fillPlacementTensorSetupCuda(
     const at::Tensor& macro_areas,
     const at::Tensor& std_area_indices,
@@ -65,3 +63,5 @@ void fillEdgeListCuda(
     const at::Tensor& edge_count,
     int64_t total_pins,
     uint64_t seed);
+
+}  // namespace placement_cuda
