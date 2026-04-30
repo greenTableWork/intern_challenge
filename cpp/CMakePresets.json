@@ -30,7 +30,11 @@
       "inherits": "vcpkg",
       "binaryDir": "${sourceDir}/build_profile",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O2 -g -DNDEBUG -fno-omit-frame-pointer -pg",
+        "CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO": "-pg",
+        "CMAKE_CUDA_FLAGS_RELWITHDEBINFO": "-O2 -g -lineinfo -DNDEBUG",
         "PLACEMENT_ENABLE_TRACY": "ON"
       }
     },
