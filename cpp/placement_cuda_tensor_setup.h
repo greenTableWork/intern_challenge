@@ -33,3 +33,8 @@ void fillPlacementTensorSetupCuda(
     double max_macro_area,
     double standard_cell_height,
     uint64_t seed);
+
+void initializeCellPositionsCuda(
+    const at::Tensor& cell_features,
+    double spread_scale,
+    uint64_t seed);

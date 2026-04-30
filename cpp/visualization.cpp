@@ -303,4 +303,41 @@ void plotPlacement(
     }
 }
 
+void plotPlacementState(
+    const torch::Tensor& cell_features,
+    const std::filesystem::path& output_path,
+    const std::string& title) {
+    configureHeadlessBackend();
+
+    const PanelData panel = buildPanelData(cell_features);
+
+    const std::filesystem::path parent = output_path.parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+
+    try {
+        plt::figure_size(800, 800);
+        drawPanel(panel, title);
+        plt::tight_layout();
+        plt::save(output_path.string());
+        plt::close();
+    } catch (const std::exception& error) {
+        if (PyErr_Occurred() != nullptr) {
+            PyErr_Print();
+        }
+        closePlotIgnoringErrors();
+        throw std::runtime_error(
+            "Unable to render placement image to " + output_path.string() +
+            ": " + error.what());
+    } catch (...) {
+        if (PyErr_Occurred() != nullptr) {
+            PyErr_Print();
+        }
+        closePlotIgnoringErrors();
+        throw std::runtime_error(
+            "Unable to render placement image to " + output_path.string());
+    }
+}
+
 }  // namespace placement

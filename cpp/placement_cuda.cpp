@@ -18,6 +18,7 @@ namespace {
 constexpr double kMinMacroArea = 100.0;
 constexpr double kMaxMacroArea = 10000.0;
 constexpr double kStandardCellHeight = 1.0;
+constexpr double kInitialSpreadScale = 0.6;
 
 struct PlacementTensorSetup {
     torch::Tensor macro_areas;
@@ -95,12 +96,12 @@ std::filesystem::path debugRenderOutputPath() {
            "placement_cuda_tensor_setup_debug.png";
 }
 
-void renderCudaTensorSetupDebug(const PlacementTensorSetup& setup) {
+void renderCudaTensorSetupDebug(const torch::Tensor& initialized_cell_features) {
     const std::filesystem::path output_path = debugRenderOutputPath();
-    placement::plotPlacement(
-        setup.cell_features,
-        setup.cell_features,
-        output_path);
+    placement::plotPlacementState(
+        initialized_cell_features,
+        output_path,
+        "Initial Placement");
     std::cout << "Rendered CUDA tensor setup to: " << output_path << "\n";
 }
 #endif
@@ -111,9 +112,10 @@ void runCudaTensorSetupCheck(
     uint64_t seed) {
     PlacementTensorSetup setup =
         buildPlacementTensorSetupCuda(macro_count, std_cell_count, seed);
+    initializeCellPositionsCuda(setup.cell_features, kInitialSpreadScale, seed);
     torch::cuda::synchronize();
 #ifdef PLACEMENT_CUDA_ENABLE_DEBUG_RENDER
-    renderCudaTensorSetupDebug(setup);
+    renderCudaTensorSetupDebug(setup.cell_features);
 #endif
 }
 

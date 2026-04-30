@@ -1,5 +1,6 @@
 #include "placement_cuda_tensor_setup.h"
 
+#include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
 #include <c10/util/Exception.h>
@@ -14,6 +15,8 @@ namespace cuda_setup = placement_cuda;
 
 constexpr int64_t kCellFeatureCount =
     static_cast<int64_t>(cuda_setup::CellFeatureIdx::Count);
+constexpr float kTwoPi = 6.2831853071795864769F;
+constexpr uint64_t kPositionSeedOffset = 0x9E3779B97F4A7C15ULL;
 
 __device__ __forceinline__ int64_t featureIndex(cuda_setup::CellFeatureIdx idx) {
     return static_cast<int64_t>(idx);
@@ -94,6 +97,64 @@ __global__ void placementTensorSetupKernel(
     }
 }
 
+__global__ void sumCellAreasKernel(
+    const float* cell_features,
+    float* total_area,
+    int64_t total_cells) {
+    extern __shared__ float block_area_sums[];
+
+    float sum = 0.0F;
+    for (int64_t cell_idx = blockIdx.x * blockDim.x + threadIdx.x;
+         cell_idx < total_cells;
+         cell_idx += blockDim.x * gridDim.x) {
+        const int64_t feature_offset = cell_idx * kCellFeatureCount;
+        sum += cell_features[
+            feature_offset + featureIndex(cuda_setup::CellFeatureIdx::Area)];
+    }
+
+    block_area_sums[threadIdx.x] = sum;
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (threadIdx.x < stride) {
+            block_area_sums[threadIdx.x] +=
+                block_area_sums[threadIdx.x + stride];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        atomicAdd(total_area, block_area_sums[0]);
+    }
+}
+
+__global__ void initializeCellPositionsKernel(
+    float* cell_features,
+    const float* total_area,
+    int64_t total_cells,
+    float spread_scale,
+    uint64_t seed) {
+    const float spread_radius = fmaxf(sqrtf(total_area[0]) * spread_scale, 1.0F);
+    for (int64_t cell_idx = blockIdx.x * blockDim.x + threadIdx.x;
+         cell_idx < total_cells;
+         cell_idx += blockDim.x * gridDim.x) {
+        curandStatePhilox4_32_10_t rng;
+        curand_init(
+            static_cast<unsigned long long>(seed + kPositionSeedOffset),
+            static_cast<unsigned long long>(cell_idx),
+            0,
+            &rng);
+
+        const float angle = curand_uniform(&rng) * kTwoPi;
+        const float radius = curand_uniform(&rng) * spread_radius;
+        const int64_t feature_offset = cell_idx * kCellFeatureCount;
+        cell_features[feature_offset + featureIndex(cuda_setup::CellFeatureIdx::X)] =
+            radius * cosf(angle);
+        cell_features[feature_offset + featureIndex(cuda_setup::CellFeatureIdx::Y)] =
+            radius * sinf(angle);
+    }
+}
+
 void checkCudaTensor(
     const at::Tensor& tensor,
     c10::ScalarType dtype,
@@ -156,6 +217,51 @@ void fillPlacementTensorSetupCuda(
         static_cast<float>(min_macro_area),
         static_cast<float>(max_macro_area),
         static_cast<float>(standard_cell_height),
+        seed);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+void initializeCellPositionsCuda(
+    const at::Tensor& cell_features,
+    double spread_scale,
+    uint64_t seed) {
+    TORCH_CHECK(spread_scale >= 0.0, "spread scale must be non-negative");
+    checkCudaTensor(
+        cell_features,
+        at::kFloat,
+        {cell_features.size(0), kCellFeatureCount});
+
+    const int64_t total_cells = cell_features.size(0);
+    if (total_cells == 0) {
+        return;
+    }
+
+    const auto total_area = at::empty({1}, cell_features.options());
+    auto stream = at::cuda::getCurrentCUDAStream();
+    C10_CUDA_CHECK(cudaMemsetAsync(total_area.data_ptr<float>(), 0, sizeof(float), stream));
+
+    constexpr int threads_per_block = 256;
+    const int blocks =
+        static_cast<int>((total_cells + threads_per_block - 1) / threads_per_block);
+    sumCellAreasKernel<<<
+        blocks,
+        threads_per_block,
+        threads_per_block * sizeof(float),
+        stream>>>(
+        cell_features.data_ptr<float>(),
+        total_area.data_ptr<float>(),
+        total_cells);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+
+    initializeCellPositionsKernel<<<
+        blocks,
+        threads_per_block,
+        0,
+        stream>>>(
+        cell_features.data_ptr<float>(),
+        total_area.data_ptr<float>(),
+        total_cells,
+        static_cast<float>(spread_scale),
         seed);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
