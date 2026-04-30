@@ -16,6 +16,17 @@ enum class CellFeatureIdx : int64_t {
     Count = 6,
 };
 
+enum class PinFeatureIdx : int64_t {
+    CellIdx = 0,
+    PinX = 1,
+    PinY = 2,
+    X = 3,
+    Y = 4,
+    Width = 5,
+    Height = 6,
+    Count = 7,
+};
+
 }  // namespace placement_cuda
 
 void fillPlacementTensorSetupCuda(
@@ -42,3 +53,9 @@ void initializeCellPositionsCuda(
 void computePinOffsetsCuda(
     const at::Tensor& num_pins_per_cell,
     const at::Tensor& pin_offsets);
+
+void fillPinFeaturesCuda(
+    const at::Tensor& cell_features,
+    const at::Tensor& pin_offsets,
+    const at::Tensor& pin_features,
+    uint64_t seed);

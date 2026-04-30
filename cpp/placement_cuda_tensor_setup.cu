@@ -18,10 +18,18 @@ namespace cuda_setup = placement_cuda;
 
 constexpr int64_t kCellFeatureCount =
     static_cast<int64_t>(cuda_setup::CellFeatureIdx::Count);
+constexpr int64_t kPinFeatureCount =
+    static_cast<int64_t>(cuda_setup::PinFeatureIdx::Count);
 constexpr float kTwoPi = 6.2831853071795864769F;
+constexpr float kPinSize = 0.1F;
 constexpr uint64_t kPositionSeedOffset = 0x9E3779B97F4A7C15ULL;
+constexpr uint64_t kPinSeedOffset = 0xD1B54A32D192ED03ULL;
 
 __device__ __forceinline__ int64_t featureIndex(cuda_setup::CellFeatureIdx idx) {
+    return static_cast<int64_t>(idx);
+}
+
+__device__ __forceinline__ int64_t featureIndex(cuda_setup::PinFeatureIdx idx) {
     return static_cast<int64_t>(idx);
 }
 
@@ -171,6 +179,69 @@ __global__ void appendTotalPinCountKernel(
         : pin_offsets[total_cells - 1] + num_pins_per_cell[total_cells - 1];
 }
 
+__global__ void fillPinFeaturesKernel(
+    const float* cell_features,
+    const int64_t* pin_offsets,
+    float* pin_features,
+    int64_t total_cells,
+    uint64_t seed) {
+    constexpr float margin = kPinSize / 2.0F;
+    for (int64_t cell_idx = blockIdx.x * blockDim.x + threadIdx.x;
+         cell_idx < total_cells;
+         cell_idx += blockDim.x * gridDim.x) {
+        const int64_t pin_begin = pin_offsets[cell_idx];
+        const int64_t pin_end = pin_offsets[cell_idx + 1];
+        const int64_t cell_feature_offset = cell_idx * kCellFeatureCount;
+        const float cell_width =
+            cell_features[
+                cell_feature_offset + featureIndex(cuda_setup::CellFeatureIdx::Width)];
+        const float cell_height =
+            cell_features[
+                cell_feature_offset + featureIndex(cuda_setup::CellFeatureIdx::Height)];
+        const bool can_place_randomly =
+            cell_width > 2.0F * margin && cell_height > 2.0F * margin;
+
+        for (int64_t pin_idx = pin_begin; pin_idx < pin_end; ++pin_idx) {
+            float pin_x = cell_width / 2.0F;
+            float pin_y = cell_height / 2.0F;
+            if (can_place_randomly) {
+                curandStatePhilox4_32_10_t rng;
+                curand_init(
+                    static_cast<unsigned long long>(seed + kPinSeedOffset),
+                    static_cast<unsigned long long>(pin_idx),
+                    0,
+                    &rng);
+                pin_x = curand_uniform(&rng) * (cell_width - 2.0F * margin) + margin;
+                pin_y =
+                    curand_uniform(&rng) * (cell_height - 2.0F * margin) + margin;
+            }
+
+            const int64_t pin_feature_offset = pin_idx * kPinFeatureCount;
+            pin_features[
+                pin_feature_offset + featureIndex(cuda_setup::PinFeatureIdx::CellIdx)] =
+                static_cast<float>(cell_idx);
+            pin_features[
+                pin_feature_offset + featureIndex(cuda_setup::PinFeatureIdx::PinX)] =
+                pin_x;
+            pin_features[
+                pin_feature_offset + featureIndex(cuda_setup::PinFeatureIdx::PinY)] =
+                pin_y;
+            pin_features[
+                pin_feature_offset + featureIndex(cuda_setup::PinFeatureIdx::X)] =
+                pin_x;
+            pin_features[
+                pin_feature_offset + featureIndex(cuda_setup::PinFeatureIdx::Y)] =
+                pin_y;
+            pin_features[
+                pin_feature_offset + featureIndex(cuda_setup::PinFeatureIdx::Width)] =
+                kPinSize;
+            pin_features[
+                pin_feature_offset + featureIndex(cuda_setup::PinFeatureIdx::Height)] =
+                kPinSize;
+        }
+    }
+}
+
 void checkCudaTensor(
     const at::Tensor& tensor,
     c10::ScalarType dtype,
@@ -260,6 +331,37 @@ void computePinOffsetsCuda(
         num_pins_per_cell.data_ptr<int64_t>(),
         pin_offsets.data_ptr<int64_t>(),
         total_cells);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+void fillPinFeaturesCuda(
+    const at::Tensor& cell_features,
+    const at::Tensor& pin_offsets,
+    const at::Tensor& pin_features,
+    uint64_t seed) {
+    const int64_t total_cells = cell_features.size(0);
+    const int64_t total_pins = pin_features.size(0);
+    checkCudaTensor(cell_features, at::kFloat, {total_cells, kCellFeatureCount});
+    checkCudaTensor(pin_offsets, at::kLong, {total_cells + 1});
+    checkCudaTensor(pin_features, at::kFloat, {total_pins, kPinFeatureCount});
+
+    if (total_cells == 0 || total_pins == 0) {
+        return;
+    }
+
+    constexpr int threads_per_block = 256;
+    const int blocks =
+        static_cast<int>((total_cells + threads_per_block - 1) / threads_per_block);
+    fillPinFeaturesKernel<<<
+        blocks,
+        threads_per_block,
+        0,
+        at::cuda::getCurrentCUDAStream()>>>(
+        cell_features.data_ptr<float>(),
+        pin_offsets.data_ptr<int64_t>(),
+        pin_features.data_ptr<float>(),
+        total_cells,
+        seed);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 

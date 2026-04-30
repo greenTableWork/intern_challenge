@@ -20,8 +20,16 @@ constexpr double kMinMacroArea = 100.0;
 constexpr double kMaxMacroArea = 10000.0;
 constexpr double kStandardCellHeight = 1.0;
 constexpr double kInitialSpreadScale = 0.6;
+constexpr int64_t kCellFeatureCount =
+    static_cast<int64_t>(placement_cuda::CellFeatureIdx::Count);
+constexpr int64_t kPinFeatureCount =
+    static_cast<int64_t>(placement_cuda::PinFeatureIdx::Count);
 
 int64_t featureIndex(placement_cuda::CellFeatureIdx idx) {
+    return static_cast<int64_t>(idx);
+}
+
+int64_t featureIndex(placement_cuda::PinFeatureIdx idx) {
     return static_cast<int64_t>(idx);
 }
 
@@ -32,6 +40,7 @@ struct PlacementTensorSetup {
     torch::Tensor areas;
     torch::Tensor num_pins_per_cell;
     torch::Tensor pin_offsets;
+    torch::Tensor pin_features;
     torch::Tensor cell_widths;
     torch::Tensor cell_heights;
     torch::Tensor cell_features;
@@ -44,6 +53,12 @@ void checkTensor(
     TORCH_CHECK(tensor.is_cuda(), "expected CUDA tensor");
     TORCH_CHECK(tensor.scalar_type() == dtype, "unexpected tensor dtype");
     TORCH_CHECK(tensor.sizes() == sizes, "unexpected tensor shape");
+}
+
+int64_t readTotalPinsHost(const torch::Tensor& pin_offsets, int64_t total_cells) {
+    // Tensor allocation still needs host shape metadata; later CUDA milestones
+    // can replace this with a capacity-based allocation strategy.
+    return pin_offsets.index({total_cells}).item<int64_t>();
 }
 
 PlacementTensorSetup buildPlacementTensorSetupCuda(
@@ -64,9 +79,10 @@ PlacementTensorSetup buildPlacementTensorSetupCuda(
         torch::empty({total_cells}, float_options),
         torch::empty({total_cells}, long_options),
         torch::empty({total_cells + 1}, long_options),
+        torch::Tensor(),
         torch::empty({total_cells}, float_options),
         torch::empty({total_cells}, float_options),
-        torch::empty({total_cells, 6}, float_options),
+        torch::empty({total_cells, kCellFeatureCount}, float_options),
     };
 
     fillPlacementTensorSetupCuda(
@@ -85,6 +101,9 @@ PlacementTensorSetup buildPlacementTensorSetupCuda(
         kStandardCellHeight,
         seed);
     computePinOffsetsCuda(setup.num_pins_per_cell, setup.pin_offsets);
+    const int64_t total_pins = readTotalPinsHost(setup.pin_offsets, total_cells);
+    setup.pin_features = torch::empty({total_pins, kPinFeatureCount}, float_options);
+    fillPinFeaturesCuda(setup.cell_features, setup.pin_offsets, setup.pin_features, seed);
 
     checkTensor(setup.macro_areas, torch::kFloat32, {macro_count});
     checkTensor(setup.std_area_indices, torch::kInt64, {std_cell_count});
@@ -92,9 +111,10 @@ PlacementTensorSetup buildPlacementTensorSetupCuda(
     checkTensor(setup.areas, torch::kFloat32, {total_cells});
     checkTensor(setup.num_pins_per_cell, torch::kInt64, {total_cells});
     checkTensor(setup.pin_offsets, torch::kInt64, {total_cells + 1});
+    checkTensor(setup.pin_features, torch::kFloat32, {total_pins, kPinFeatureCount});
     checkTensor(setup.cell_widths, torch::kFloat32, {total_cells});
     checkTensor(setup.cell_heights, torch::kFloat32, {total_cells});
-    checkTensor(setup.cell_features, torch::kFloat32, {total_cells, 6});
+    checkTensor(setup.cell_features, torch::kFloat32, {total_cells, kCellFeatureCount});
 
     return setup;
 }
@@ -114,6 +134,7 @@ void printCudaTensorSetupDebug(
     const auto num_pins_per_cell =
         setup.num_pins_per_cell.detach().cpu().contiguous();
     const auto pin_offsets = setup.pin_offsets.detach().cpu().contiguous();
+    const auto pin_features = setup.pin_features.detach().cpu().contiguous();
     const auto cell_features = setup.cell_features.detach().cpu().contiguous();
 
     const auto macro_areas_a = macro_areas.accessor<float, 1>();
@@ -121,14 +142,18 @@ void printCudaTensorSetupDebug(
     const auto std_cell_areas_a = std_cell_areas.accessor<float, 1>();
     const auto num_pins_a = num_pins_per_cell.accessor<int64_t, 1>();
     const auto pin_offsets_a = pin_offsets.accessor<int64_t, 1>();
+    const auto pins_a = pin_features.accessor<float, 2>();
     const auto cells_a = cell_features.accessor<float, 2>();
+    const int64_t total_pins = pin_features.size(0);
 
     std::cout << "\nplacement_cuda debug dump\n";
     std::cout << "  seed: " << seed << "\n";
     std::cout << "  macros: " << macro_count << "\n";
     std::cout << "  standard cells: " << std_cell_count << "\n";
     std::cout << "  total cells: " << total_cells << "\n";
-    std::cout << "  total pins: " << pin_offsets_a[total_cells] << "\n\n";
+    std::cout << "  total pins: " << pin_offsets_a[total_cells] << "\n";
+    std::cout << "  pin_features shape: [" << total_pins << ", "
+              << kPinFeatureCount << "]\n\n";
 
     std::cout << "macro_areas:";
     for (int64_t index = 0; index < macro_count; ++index) {
@@ -185,6 +210,32 @@ void printCudaTensorSetupDebug(
                   << cells_a[cell_idx][featureIndex(placement_cuda::CellFeatureIdx::Y)]
                   << "  " << std::setw(4) << num_pins_a[cell_idx] << "  ["
                   << pin_begin << ", " << pin_end << ")\n";
+    }
+
+    std::cout << "\npins:\n";
+    std::cout << "  " << std::setw(4) << "idx" << "  " << std::setw(4)
+              << "cell" << "  " << std::setw(8) << "pin_x" << "  "
+              << std::setw(8) << "pin_y" << "  " << std::setw(8) << "x"
+              << "  " << std::setw(8) << "y" << "  " << std::setw(6)
+              << "width" << "  " << std::setw(6) << "height" << "\n";
+    for (int64_t pin_idx = 0; pin_idx < total_pins; ++pin_idx) {
+        std::cout << "  " << std::setw(4) << pin_idx << "  " << std::setw(4)
+                  << static_cast<int64_t>(
+                         pins_a[pin_idx][featureIndex(
+                             placement_cuda::PinFeatureIdx::CellIdx)])
+                  << "  " << std::setw(8)
+                  << pins_a[pin_idx][featureIndex(placement_cuda::PinFeatureIdx::PinX)]
+                  << "  " << std::setw(8)
+                  << pins_a[pin_idx][featureIndex(placement_cuda::PinFeatureIdx::PinY)]
+                  << "  " << std::setw(8)
+                  << pins_a[pin_idx][featureIndex(placement_cuda::PinFeatureIdx::X)]
+                  << "  " << std::setw(8)
+                  << pins_a[pin_idx][featureIndex(placement_cuda::PinFeatureIdx::Y)]
+                  << "  " << std::setw(6)
+                  << pins_a[pin_idx][featureIndex(placement_cuda::PinFeatureIdx::Width)]
+                  << "  " << std::setw(6)
+                  << pins_a[pin_idx][featureIndex(placement_cuda::PinFeatureIdx::Height)]
+                  << "\n";
     }
     std::cout << std::defaultfloat << "\n";
 }
