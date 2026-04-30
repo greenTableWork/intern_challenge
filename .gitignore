@@ -18,6 +18,7 @@ temp.txt
 
 # Plan files
 *[Pp][Ll][Aa][Nn]*.md
+!cpp/placement_cuda_implementation_plan.md
 
 # C++ build and vcpkg manifest artifacts
 cpp/build/

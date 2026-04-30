@@ -1,5 +1,3 @@
-#include "placement_pytorch_cuda_tensor_setup.h"
-
 #include <torch/cuda.h>
 #include <torch/jit.h>
 #include <torch/torch.h>
@@ -156,62 +154,6 @@ PlacementTensorSetup buildPlacementTensorSetup(
     return setup;
 }
 
-PlacementTensorSetup buildPlacementTensorSetupCuda(
-    int64_t macro_count,
-    int64_t std_cell_count,
-    uint64_t seed) {
-    const int64_t total_cells = macro_count + std_cell_count;
-    const torch::Device device(torch::kCUDA);
-    const auto float_options =
-        torch::TensorOptions().dtype(torch::kFloat32).device(device);
-    const auto long_options =
-        torch::TensorOptions().dtype(torch::kInt64).device(device);
-
-    PlacementTensorSetup setup{
-        torch::empty({macro_count}, float_options),
-        torch::empty({std_cell_count}, long_options),
-        torch::empty({std_cell_count}, float_options),
-        torch::empty({total_cells}, float_options),
-        torch::empty({total_cells}, float_options),
-        torch::empty({total_cells}, float_options),
-        torch::empty({total_cells, 6}, float_options),
-    };
-
-    fillPlacementTensorSetupCuda(
-        setup.macro_areas,
-        setup.std_area_indices,
-        setup.std_cell_areas,
-        setup.areas,
-        setup.cell_widths,
-        setup.cell_heights,
-        setup.cell_features,
-        macro_count,
-        std_cell_count,
-        kMinMacroArea,
-        kMaxMacroArea,
-        kStandardCellHeight,
-        seed);
-
-    checkTensor(setup.macro_areas, torch::kFloat32, {macro_count});
-    checkTensor(setup.std_area_indices, torch::kInt64, {std_cell_count});
-    checkTensor(setup.std_cell_areas, torch::kFloat32, {std_cell_count});
-    checkTensor(setup.areas, torch::kFloat32, {total_cells});
-    checkTensor(setup.cell_widths, torch::kFloat32, {total_cells});
-    checkTensor(setup.cell_heights, torch::kFloat32, {total_cells});
-    checkTensor(setup.cell_features, torch::kFloat32, {total_cells, 6});
-
-    return setup;
-}
-
-void runCudaTensorSetupCheck(
-    int64_t macro_count,
-    int64_t std_cell_count,
-    uint64_t seed) {
-    PlacementTensorSetup setup =
-        buildPlacementTensorSetupCuda(macro_count, std_cell_count, seed);
-    torch::cuda::synchronize();
-}
-
 PlacementProblem generatePlacementInput(
     int num_macros,
     int num_std_cells,
@@ -361,7 +303,6 @@ int main() {
     torch::manual_seed(seed);
     torch::cuda::manual_seed_all(seed);
     runJitSmokeCheck();
-    runCudaTensorSetupCheck(num_macros, num_std_cells, seed);
 
     const torch::Device device(torch::kCUDA);
     PlacementProblem problem = generatePlacementInput(num_macros, num_std_cells, device);

@@ -166,15 +166,29 @@ target_link_libraries(placement_test PRIVATE placement_core CLI11::CLI11)
 target_compile_features(placement_test PRIVATE cxx_std_23)
 enable_placement_coverage(placement_test)
 
-add_executable(
-  placement_pytorch_cuda
-  placement_pytorch_cuda.cpp
-  placement_pytorch_cuda_tensor_setup.cu
-)
+add_executable(placement_pytorch_cuda placement_pytorch_cuda.cpp)
 target_include_directories(placement_pytorch_cuda SYSTEM PRIVATE "${TORCH_INCLUDE_DIRS}")
-target_link_libraries(placement_pytorch_cuda PRIVATE "${TORCH_LIBRARIES}" CUDA::curand)
+target_link_libraries(placement_pytorch_cuda PRIVATE "${TORCH_LIBRARIES}")
 target_compile_features(placement_pytorch_cuda PRIVATE cxx_std_23)
 enable_placement_coverage(placement_pytorch_cuda)
+
+add_executable(
+  placement_cuda
+  placement_cuda.cpp
+  placement_cuda_tensor_setup.cu
+)
+target_include_directories(placement_cuda SYSTEM PRIVATE "${TORCH_INCLUDE_DIRS}")
+target_compile_definitions(
+  placement_cuda
+  PRIVATE
+    PLACEMENT_REPO_ROOT="${CMAKE_CURRENT_LIST_DIR}/.."
+    $<$<CONFIG:Debug>:PLACEMENT_CUDA_DEBUG_BUILD=1>
+    $<$<CONFIG:Debug>:PLACEMENT_CUDA_ENABLE_DEBUG_RENDER=1>
+    $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>:PLACEMENT_CUDA_RELEASE_BUILD=1>
+)
+target_link_libraries(placement_cuda PRIVATE placement_core CUDA::curand)
+target_compile_features(placement_cuda PRIVATE cxx_std_23)
+enable_placement_coverage(placement_cuda)
 
 if(BUILD_TESTING)
   add_executable(
@@ -212,6 +226,10 @@ if(MSVC)
     placement_pytorch_cuda
     PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4>
   )
+  target_compile_options(
+    placement_cuda
+    PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4>
+  )
   if(TARGET placement_unit_tests)
     target_compile_options(placement_unit_tests PRIVATE /W4)
   endif()
@@ -221,6 +239,10 @@ else()
   target_compile_options(placement_test PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(
     placement_pytorch_cuda
+    PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic>
+  )
+  target_compile_options(
+    placement_cuda
     PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic>
   )
   if(TARGET placement_unit_tests)
