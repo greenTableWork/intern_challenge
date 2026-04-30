@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(placement_cpp LANGUAGES CXX)
+project(placement_cpp LANGUAGES CXX CUDA)
 
 include(CTest)
 
@@ -113,6 +113,7 @@ endif()
 list(PREPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX_PATH}")
 
 find_package(Torch CONFIG REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
 find_package(SQLite3 REQUIRED)
 if(PLACEMENT_ENABLE_TRACY)
@@ -165,6 +166,16 @@ target_link_libraries(placement_test PRIVATE placement_core CLI11::CLI11)
 target_compile_features(placement_test PRIVATE cxx_std_23)
 enable_placement_coverage(placement_test)
 
+add_executable(
+  placement_pytorch_cuda
+  placement_pytorch_cuda.cpp
+  placement_pytorch_cuda_tensor_setup.cu
+)
+target_include_directories(placement_pytorch_cuda SYSTEM PRIVATE "${TORCH_INCLUDE_DIRS}")
+target_link_libraries(placement_pytorch_cuda PRIVATE "${TORCH_LIBRARIES}" CUDA::curand)
+target_compile_features(placement_pytorch_cuda PRIVATE cxx_std_23)
+enable_placement_coverage(placement_pytorch_cuda)
+
 if(BUILD_TESTING)
   add_executable(
     placement_unit_tests
@@ -197,6 +208,10 @@ if(MSVC)
   target_compile_options(placement_core PRIVATE /W4)
   target_compile_options(placement PRIVATE /W4)
   target_compile_options(placement_test PRIVATE /W4)
+  target_compile_options(
+    placement_pytorch_cuda
+    PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4>
+  )
   if(TARGET placement_unit_tests)
     target_compile_options(placement_unit_tests PRIVATE /W4)
   endif()
@@ -204,6 +219,10 @@ else()
   target_compile_options(placement_core PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(placement PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(placement_test PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(
+    placement_pytorch_cuda
+    PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic>
+  )
   if(TARGET placement_unit_tests)
     target_compile_options(placement_unit_tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
