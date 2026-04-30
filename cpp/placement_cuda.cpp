@@ -26,6 +26,7 @@ struct PlacementTensorSetup {
     torch::Tensor std_cell_areas;
     torch::Tensor areas;
     torch::Tensor num_pins_per_cell;
+    torch::Tensor pin_offsets;
     torch::Tensor cell_widths;
     torch::Tensor cell_heights;
     torch::Tensor cell_features;
@@ -57,6 +58,7 @@ PlacementTensorSetup buildPlacementTensorSetupCuda(
         torch::empty({std_cell_count}, float_options),
         torch::empty({total_cells}, float_options),
         torch::empty({total_cells}, long_options),
+        torch::empty({total_cells + 1}, long_options),
         torch::empty({total_cells}, float_options),
         torch::empty({total_cells}, float_options),
         torch::empty({total_cells, 6}, float_options),
@@ -77,12 +79,14 @@ PlacementTensorSetup buildPlacementTensorSetupCuda(
         kMaxMacroArea,
         kStandardCellHeight,
         seed);
+    computePinOffsetsCuda(setup.num_pins_per_cell, setup.pin_offsets);
 
     checkTensor(setup.macro_areas, torch::kFloat32, {macro_count});
     checkTensor(setup.std_area_indices, torch::kInt64, {std_cell_count});
     checkTensor(setup.std_cell_areas, torch::kFloat32, {std_cell_count});
     checkTensor(setup.areas, torch::kFloat32, {total_cells});
     checkTensor(setup.num_pins_per_cell, torch::kInt64, {total_cells});
+    checkTensor(setup.pin_offsets, torch::kInt64, {total_cells + 1});
     checkTensor(setup.cell_widths, torch::kFloat32, {total_cells});
     checkTensor(setup.cell_heights, torch::kFloat32, {total_cells});
     checkTensor(setup.cell_features, torch::kFloat32, {total_cells, 6});

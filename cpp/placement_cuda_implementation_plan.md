@@ -16,7 +16,7 @@
 - [x] Create the initial CUDA tensor setup path for areas, dimensions, and initial `cell_features`.
 - [x] Generate macro and standard-cell pin counts in CUDA and write `NumPins` directly into `cell_features`.
 - [x] Add debug-mode rendering for the CUDA-initialized placement state.
-- [ ] Compute total pin counts and offsets with CUDA-friendly prefix-sum primitives.
+- [x] Compute total pin counts and offsets with CUDA-friendly prefix-sum primitives.
 - [ ] Allocate and fill `pin_features` in CUDA.
 - [ ] Generate `edge_list` in CUDA, initially accepting a simple bounded edge-count strategy before optimizing duplicate handling.
 - [x] Initialize cell positions in CUDA without host scalar extraction.

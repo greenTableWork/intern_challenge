@@ -38,3 +38,7 @@ void initializeCellPositionsCuda(
     const at::Tensor& cell_features,
     double spread_scale,
     uint64_t seed);
+
+void computePinOffsetsCuda(
+    const at::Tensor& num_pins_per_cell,
+    const at::Tensor& pin_offsets);

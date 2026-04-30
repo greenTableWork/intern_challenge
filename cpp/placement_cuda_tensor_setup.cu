@@ -6,6 +6,9 @@
 #include <c10/util/Exception.h>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
+#include <thrust/device_ptr.h>
+#include <thrust/scan.h>
+#include <thrust/system/cuda/execution_policy.h>
 
 #include <cstdint>
 
@@ -155,6 +158,19 @@ __global__ void initializeCellPositionsKernel(
     }
 }
 
+__global__ void appendTotalPinCountKernel(
+    const int64_t* num_pins_per_cell,
+    int64_t* pin_offsets,
+    int64_t total_cells) {
+    if (blockIdx.x != 0 || threadIdx.x != 0) {
+        return;
+    }
+
+    pin_offsets[total_cells] = total_cells == 0
+        ? 0
+        : pin_offsets[total_cells - 1] + num_pins_per_cell[total_cells - 1];
+}
+
 void checkCudaTensor(
     const at::Tensor& tensor,
     c10::ScalarType dtype,
@@ -218,6 +234,32 @@ void fillPlacementTensorSetupCuda(
         static_cast<float>(max_macro_area),
         static_cast<float>(standard_cell_height),
         seed);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+void computePinOffsetsCuda(
+    const at::Tensor& num_pins_per_cell,
+    const at::Tensor& pin_offsets) {
+    const int64_t total_cells = num_pins_per_cell.size(0);
+    checkCudaTensor(num_pins_per_cell, at::kLong, {total_cells});
+    checkCudaTensor(pin_offsets, at::kLong, {total_cells + 1});
+
+    auto stream = at::cuda::getCurrentCUDAStream();
+    if (total_cells > 0) {
+        auto counts_begin =
+            thrust::device_pointer_cast(num_pins_per_cell.data_ptr<int64_t>());
+        auto offsets_begin = thrust::device_pointer_cast(pin_offsets.data_ptr<int64_t>());
+        thrust::exclusive_scan(
+            thrust::cuda::par.on(stream.stream()),
+            counts_begin,
+            counts_begin + total_cells,
+            offsets_begin);
+    }
+
+    appendTotalPinCountKernel<<<1, 1, 0, stream>>>(
+        num_pins_per_cell.data_ptr<int64_t>(),
+        pin_offsets.data_ptr<int64_t>(),
+        total_cells);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
